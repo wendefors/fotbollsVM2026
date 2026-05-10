@@ -449,7 +449,7 @@ function ReceiptView({
           <p className="eyebrow">Tack för att du är med och tippar</p>
           <h2>Ditt tips är inskickat</h2>
           <p>
-            Håll koll på dina resultat med initialerna nedan. De är det namn som
+            Håll koll på dina resultat med initialerna. De är det namn som
             syns i listor och poängliga.
           </p>
         </div>
@@ -459,8 +459,8 @@ function ReceiptView({
         </div>
       </div>
 
-      <div className="receipt-grid">
-        <div className="payment-box">
+      <div className="receipt-top-grid">
+        <div className="payment-box receipt-feature">
           <h3>Swish</h3>
           <p>Swisha 50 kr till Gustav.</p>
           <strong>070-309 26 43</strong>
@@ -472,9 +472,11 @@ function ReceiptView({
             Nummer och summa fylls i manuellt.
           </span>
         </div>
+      </div>
 
+      <div className="receipt-grid">
         <div className="summary-box">
-          <h3>Dina Sveriges matcher</h3>
+          <h3>Sveriges matcher</h3>
           {prediction.swedenMatches.map((match) => (
             <p key={match.id}>
               {match.homeTeam} {match.homeGoals || 0}-{match.awayGoals || 0}{" "}
@@ -484,14 +486,14 @@ function ReceiptView({
         </div>
 
         <div className="summary-box">
-          <h3>Din topp 3</h3>
+          <h3>Topp 3</h3>
           <p>1. {prediction.podium.champion || "Ej valt"}</p>
           <p>2. {prediction.podium.runnerUp || "Ej valt"}</p>
           <p>3. {prediction.podium.thirdPlace || "Ej valt"}</p>
         </div>
 
         <div className="summary-box">
-          <h3>Dina turneringsfrågor</h3>
+          <h3>Turneringsfrågor</h3>
           <p>Gula kort: {prediction.tournamentQuestions.yellowCards || "Ej valt"}</p>
           <p>Röda kort: {prediction.tournamentQuestions.redCards || "Ej valt"}</p>
           <p>Totalt antal mål: {prediction.tournamentQuestions.totalGoals || "Ej valt"}</p>

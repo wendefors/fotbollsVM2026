@@ -25,6 +25,7 @@ Implementerade huvudfunktioner:
 - Formulärvalideringen är tillfälligt avslappnad för testning: inga fält är obligatoriska i UI:t, och kontaktfält i Supabase tillåter null.
 - Publika initialer är unika. Vid dublett får senare deltagare löpnummer, t.ex. `GW1`.
 - Efter inskick navigeras deltagaren till en egen tack-/kvittovy med publika initialer, Swish-info och sammanställning av tipset. Formuläret rensas direkt efter lyckad inskickning.
+- Kvittovyn är strukturerad med initialer i hero, separat Swish-ruta och en tvåspaltig sammanfattning av tipset för bättre läsbarhet.
 - Mobilflödet har tydligare submit-status: knappen visar `Skickar`, fel visas vid nätverks-/Supabaseproblem och appen navigerar inte till kvittovyn utan kvittodata.
 - UUID skapas via `src/lib/id.ts`, med fallback för mobiltest över lokal HTTP där `crypto.randomUUID()` kan saknas.
 - Nya inskick stoppas om samma ifyllda e-postadress redan finns i `participants`.
