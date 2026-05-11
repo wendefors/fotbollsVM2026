@@ -1,2 +1,3 @@
-delete from public.predictions;
-delete from public.participants;
+-- No-op.
+-- Data cleanup must not be performed through migrations.
+-- See docs/data-safety.md for the required process.

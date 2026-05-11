@@ -86,7 +86,7 @@ export const scoreRules: ScoreRule[] = [
   {
     label: "Turneringsfrågor",
     points:
-      "Totalt antal gula kort, totalt antal röda kort och totalt antal mål (summerat för samtliga lag). 3 p per fråga för den tippare som kommer närmast det faktiska utfallet.",
+      "Gula kort och totalt antal mål: 3 p inom 3%, 2 p inom 5% och 1 p inom 10% från utfallet. Röda kort: 3 p inom 1 kort, 2 p inom 2 kort och 1 p inom 3 kort.",
   },
   {
     label: "Utslagsfråga",

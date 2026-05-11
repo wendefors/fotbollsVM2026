@@ -59,6 +59,11 @@ export const samplePredictions: PublicPrediction[] = [
     tieBreaker: {
       finalFirstGoalMinute: 27,
     },
+    swedenPoints: 7,
+    groupPoints: 6,
+    podiumPoints: 3,
+    statisticsPoints: 2,
+    tieBreakerDistance: null,
   },
   {
     id: "2",
@@ -118,5 +123,10 @@ export const samplePredictions: PublicPrediction[] = [
     tieBreaker: {
       finalFirstGoalMinute: 39,
     },
+    swedenPoints: 4,
+    groupPoints: 5,
+    podiumPoints: 3,
+    statisticsPoints: 2,
+    tieBreakerDistance: null,
   },
 ];

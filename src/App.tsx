@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   CircleHelp,
   Eye,
+  BarChart3,
   Medal,
   RotateCcw,
   Send,
@@ -26,13 +27,43 @@ import { createId } from "./lib/id";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type { GroupPrediction, PredictionForm, PublicPrediction } from "./lib/types";
 
-type View = "submit" | "receipt" | "predictions" | "standings";
+type View = "submit" | "receipt" | "predictions" | "standings" | "statistics";
 type PredictionFilter =
   | "all"
   | "sweden"
   | "groups"
   | "podium"
   | "questions";
+
+type AdminResults = {
+  swedenMatches: Array<{
+    id: string;
+    label: string;
+    homeTeam: string;
+    awayTeam: string;
+    homeGoals: number | "";
+    awayGoals: number | "";
+  }>;
+  groups: Array<{
+    group: GroupPrediction["group"];
+    winner: string;
+    runnerUp: string;
+  }>;
+  podium: {
+    champion: string;
+    runnerUp: string;
+    thirdPlace: string;
+  };
+  statistics: {
+    yellowCards: number | "";
+    redCards: number | "";
+    totalGoals: number | "";
+    isFinal: boolean;
+  };
+  tieBreaker: {
+    finalFirstGoalMinute: number | "";
+  };
+};
 
 const predictionFilters: Array<{ id: PredictionFilter; label: string }> = [
   { id: "all", label: "Totalt" },
@@ -42,11 +73,346 @@ const predictionFilters: Array<{ id: PredictionFilter; label: string }> = [
   { id: "questions", label: "Statistik" },
 ];
 
+function getFilteredPoints(prediction: PublicPrediction, filter: PredictionFilter) {
+  if (filter === "sweden") {
+    return prediction.swedenPoints;
+  }
+
+  if (filter === "groups") {
+    return prediction.groupPoints;
+  }
+
+  if (filter === "podium") {
+    return prediction.podiumPoints;
+  }
+
+  if (filter === "questions") {
+    return prediction.statisticsPoints;
+  }
+
+  return prediction.points;
+}
+
+function toNumericFormValue(value: string) {
+  if (value === "") {
+    return "";
+  }
+
+  if (!/^\d+$/.test(value)) {
+    return null;
+  }
+
+  return Number(value);
+}
+
+function isWholeNumber(value: number | ""): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function validateSubmission(form: PredictionForm) {
+  const contactFields = [
+    form.contact.firstName,
+    form.contact.lastName,
+    form.contact.phone,
+    form.contact.email,
+  ];
+
+  if (contactFields.some((value) => value.trim() === "")) {
+    return "Fyll i alla kontaktuppgifter.";
+  }
+
+  if (!isValidEmail(form.contact.email)) {
+    return "Ange en korrekt e-postadress.";
+  }
+
+  if (
+    form.swedenMatches.some(
+      (match) => !isWholeNumber(match.homeGoals) || !isWholeNumber(match.awayGoals),
+    )
+  ) {
+    return "Fyll i resultat för alla Sveriges matcher med heltal.";
+  }
+
+  const incompleteGroup = form.groups.find(
+    (group) => group.winner === "" || group.runnerUp === "",
+  );
+
+  if (incompleteGroup) {
+    return `Välj både etta och tvåa i grupp ${incompleteGroup.group}.`;
+  }
+
+  if (!form.podium.champion || !form.podium.runnerUp || !form.podium.thirdPlace) {
+    return "Fyll i hela topp 3.";
+  }
+
+  if (
+    !isWholeNumber(form.tournamentQuestions.yellowCards) ||
+    !isWholeNumber(form.tournamentQuestions.redCards) ||
+    !isWholeNumber(form.tournamentQuestions.totalGoals)
+  ) {
+    return "Fyll i alla turneringsfrågor med heltal.";
+  }
+
+  const finalFirstGoalMinute = form.tieBreaker.finalFirstGoalMinute;
+
+  if (!isWholeNumber(finalFirstGoalMinute) || finalFirstGoalMinute < 1) {
+    return "Fyll i utslagsfrågan med en matchminut från 1 och uppåt.";
+  }
+
+  return null;
+}
+
+function formatPredictionScore(homeGoals: number | "", awayGoals: number | "") {
+  if (homeGoals === "" || awayGoals === "") {
+    return "";
+  }
+
+  return `${homeGoals}-${awayGoals}`;
+}
+
+function getRoundedPercentages(items: Array<{ count: number }>, total: number) {
+  if (total === 0) {
+    return items.map(() => 0);
+  }
+
+  const rawPercentages = items.map((item) => (item.count / total) * 100);
+  const flooredPercentages = rawPercentages.map(Math.floor);
+  let remainder = 100 - flooredPercentages.reduce((sum, value) => sum + value, 0);
+  const indexesByRemainder = rawPercentages
+    .map((percentage, index) => ({
+      index,
+      remainder: percentage - Math.floor(percentage),
+    }))
+    .sort((first, second) => second.remainder - first.remainder);
+  const indexesToRoundUp = new Set(
+    indexesByRemainder.slice(0, remainder).map((item) => item.index),
+  );
+
+  return flooredPercentages.map((percentage, index) => {
+    if (indexesToRoundUp.has(index)) {
+      return percentage + 1;
+    }
+
+    return percentage;
+  });
+}
+
+function getTopCounts(values: string[], limit: number) {
+  const counts = new Map<string, number>();
+  const answeredValues = values.filter(Boolean);
+
+  for (const value of answeredValues) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  const sortedItems = [...counts.entries()]
+    .map(([label, count]) => ({
+      label,
+      count,
+    }))
+    .sort((first, second) => second.count - first.count || first.label.localeCompare(second.label, "sv-SE"));
+
+  return sortedItems.slice(0, limit).map((item) => ({
+    ...item,
+    percentage: answeredValues.length > 0
+      ? Math.round((item.count / answeredValues.length) * 100)
+      : 0,
+  }));
+}
+
+function getCountsForLabels(values: string[], labels: string[]) {
+  const counts = new Map(labels.map((label) => [label, 0]));
+  const answeredValues = values.filter((value) => labels.includes(value));
+
+  for (const value of answeredValues) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  const items = labels.map((label) => ({
+    label,
+    count: counts.get(label) ?? 0,
+  }));
+  const percentages = getRoundedPercentages(items, answeredValues.length);
+
+  return items.map((item, index) => ({
+    ...item,
+    percentage: percentages[index],
+  }));
+}
+
+function getQuartile(values: number[], quartile: 1 | 3) {
+  if (values.length === 0) {
+    return null;
+  }
+
+  const position = (values.length - 1) * (quartile === 1 ? 0.25 : 0.75);
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+
+  if (lower === upper) {
+    return values[lower];
+  }
+
+  return values[lower] + (values[upper] - values[lower]) * (position - lower);
+}
+
+function getNumericSummary(values: Array<number | "">) {
+  const numericValues = values
+    .filter((value): value is number => typeof value === "number")
+    .sort((first, second) => first - second);
+
+  if (numericValues.length === 0) {
+    return null;
+  }
+
+  const sum = numericValues.reduce((total, value) => total + value, 0);
+  const middle = Math.floor(numericValues.length / 2);
+  const median =
+    numericValues.length % 2 === 0
+      ? (numericValues[middle - 1] + numericValues[middle]) / 2
+      : numericValues[middle];
+
+  return {
+    min: numericValues[0],
+    max: numericValues[numericValues.length - 1],
+    average: Math.round(sum / numericValues.length),
+    median: Math.round(median),
+    typicalRange: {
+      from: Math.round(getQuartile(numericValues, 1) ?? numericValues[0]),
+      to: Math.round(getQuartile(numericValues, 3) ?? numericValues[numericValues.length - 1]),
+    },
+  };
+}
+
+function getSwedenPointsFromPrediction(prediction: PublicPrediction) {
+  return prediction.swedenMatches.reduce((points, match) => {
+    if (match.homeGoals === "" || match.awayGoals === "") {
+      return points;
+    }
+
+    const swedenGoals =
+      match.homeTeam === "Sverige" ? match.homeGoals : match.awayGoals;
+    const opponentGoals =
+      match.homeTeam === "Sverige" ? match.awayGoals : match.homeGoals;
+
+    if (swedenGoals > opponentGoals) {
+      return points + 3;
+    }
+
+    if (swedenGoals === opponentGoals) {
+      return points + 1;
+    }
+
+    return points;
+  }, 0);
+}
+
+function getConsensusItems(predictions: PublicPrediction[]) {
+  const items: Array<{
+    label: string;
+    topLabel: string;
+    percentage: number;
+  }> = [];
+
+  function addItem(label: string, values: string[]) {
+    const topItem = getTopCounts(values, 1)[0];
+
+    if (!topItem) {
+      return;
+    }
+
+    items.push({
+      label,
+      topLabel: topItem.label,
+      percentage: topItem.percentage,
+    });
+  }
+
+  for (const match of initialSwedenMatches) {
+    addItem(
+      `${match.homeTeam} - ${match.awayTeam}`,
+      predictions.map((prediction) => {
+        const predictionMatch = prediction.swedenMatches.find(
+          (candidate) => candidate.id === match.id,
+        );
+
+        return predictionMatch
+          ? formatPredictionScore(predictionMatch.homeGoals, predictionMatch.awayGoals)
+          : "";
+      }),
+    );
+  }
+
+  for (const group of groups) {
+    addItem(
+      `Grupp ${group}, etta`,
+      predictions.map(
+        (prediction) =>
+          prediction.groups.find((groupPrediction) => groupPrediction.group === group)
+            ?.winner ?? "",
+      ),
+    );
+    addItem(
+      `Grupp ${group}, tvåa`,
+      predictions.map(
+        (prediction) =>
+          prediction.groups.find((groupPrediction) => groupPrediction.group === group)
+            ?.runnerUp ?? "",
+      ),
+    );
+  }
+
+  addItem(
+    "Världsmästare",
+    predictions.map((prediction) => prediction.podium.champion),
+  );
+  addItem(
+    "Finaltvåa",
+    predictions.map((prediction) => prediction.podium.runnerUp),
+  );
+  addItem(
+    "Trea",
+    predictions.map((prediction) => prediction.podium.thirdPlace),
+  );
+
+  return items;
+}
+
 const emptyGroups: GroupPrediction[] = groups.map((group) => ({
   group,
   winner: "",
   runnerUp: "",
 }));
+
+const initialAdminResults: AdminResults = {
+  swedenMatches: initialSwedenMatches.map((match) => ({
+    id: match.id,
+    label: match.label,
+    homeTeam: match.homeTeam,
+    awayTeam: match.awayTeam,
+    homeGoals: "",
+    awayGoals: "",
+  })),
+  groups: emptyGroups,
+  podium: {
+    champion: "",
+    runnerUp: "",
+    thirdPlace: "",
+  },
+  statistics: {
+    yellowCards: "",
+    redCards: "",
+    totalGoals: "",
+    isFinal: false,
+  },
+  tieBreaker: {
+    finalFirstGoalMinute: "",
+  },
+};
 
 const initialForm: PredictionForm = {
   contact: {
@@ -111,7 +477,12 @@ function mapPublicPrediction(prediction: Record<string, any>): PublicPrediction 
     podium: prediction.podium,
     tournamentQuestions: prediction.tournament_questions,
     tieBreaker: prediction.tie_breaker,
+    swedenPoints: prediction.sweden_points ?? 0,
+    groupPoints: prediction.group_points ?? 0,
+    podiumPoints: prediction.podium_points ?? 0,
+    statisticsPoints: prediction.statistics_points ?? 0,
     points: prediction.points,
+    tieBreakerDistance: prediction.tie_breaker_distance ?? null,
   };
 }
 
@@ -138,6 +509,7 @@ async function waitForPublicPrediction(predictionId: string) {
 }
 
 function App() {
+  const isAdminRoute = new URLSearchParams(window.location.search).has("admin");
   const [view, setView] = useState<View>("submit");
   const [form, setForm] = useState<PredictionForm>(initialForm);
   const [predictions, setPredictions] = useState<PublicPrediction[]>(samplePredictions);
@@ -145,6 +517,7 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [receipt, setReceipt] = useState<PublicPrediction | null>(null);
+  const [focusedPredictionId, setFocusedPredictionId] = useState<string | null>(null);
   const isSubmissionOpen = Date.now() <= submissionDeadline.getTime();
 
   const standings = useMemo(
@@ -177,7 +550,12 @@ function App() {
           podium: prediction.podium,
           tournamentQuestions: prediction.tournament_questions,
           tieBreaker: prediction.tie_breaker,
+          swedenPoints: prediction.sweden_points ?? 0,
+          groupPoints: prediction.group_points ?? 0,
+          podiumPoints: prediction.podium_points ?? 0,
+          statisticsPoints: prediction.statistics_points ?? 0,
           points: prediction.points,
+          tieBreakerDistance: prediction.tie_breaker_distance ?? null,
         })),
       );
     }
@@ -196,11 +574,17 @@ function App() {
   }
 
   function updateMatch(index: number, field: "homeGoals" | "awayGoals", value: string) {
+    const numericValue = toNumericFormValue(value);
+
+    if (numericValue === null) {
+      return;
+    }
+
     setForm((current) => ({
       ...current,
       swedenMatches: current.swedenMatches.map((match, matchIndex) =>
         matchIndex === index
-          ? { ...match, [field]: value === "" ? "" : Number(value) }
+          ? { ...match, [field]: numericValue }
           : match,
       ),
     }));
@@ -229,11 +613,17 @@ function App() {
     field: keyof PredictionForm["tournamentQuestions"],
     value: string,
   ) {
+    const numericValue = toNumericFormValue(value);
+
+    if (numericValue === null) {
+      return;
+    }
+
     setForm((current) => ({
       ...current,
       tournamentQuestions: {
         ...current.tournamentQuestions,
-        [field]: value === "" ? "" : Number(value),
+        [field]: numericValue,
       },
     }));
   }
@@ -242,11 +632,17 @@ function App() {
     field: keyof PredictionForm["tieBreaker"],
     value: string,
   ) {
+    const numericValue = toNumericFormValue(value);
+
+    if (numericValue === null) {
+      return;
+    }
+
     setForm((current) => ({
       ...current,
       tieBreaker: {
         ...current.tieBreaker,
-        [field]: value === "" ? "" : Number(value),
+        [field]: numericValue,
       },
     }));
   }
@@ -257,6 +653,13 @@ function App() {
 
     if (!isSubmissionOpen) {
       setSubmitError("Tippningen är stängd.");
+      return;
+    }
+
+    const validationError = validateSubmission(form);
+
+    if (validationError) {
+      setSubmitError(validationError);
       return;
     }
 
@@ -271,10 +674,10 @@ function App() {
         const participantId = createId();
         const { error: participantError } = await supabase.from("participants").insert({
           id: participantId,
-          first_name: form.contact.firstName,
-          last_name: form.contact.lastName,
-          phone: form.contact.phone,
-          email: form.contact.email,
+          first_name: form.contact.firstName.trim(),
+          last_name: form.contact.lastName.trim(),
+          phone: form.contact.phone.trim(),
+          email: form.contact.email.trim().toLowerCase(),
         });
 
         if (participantError) {
@@ -328,7 +731,12 @@ function App() {
           podium: form.podium,
           tournamentQuestions: form.tournamentQuestions,
           tieBreaker: form.tieBreaker,
+          swedenPoints: 0,
+          groupPoints: 0,
+          podiumPoints: 0,
+          statisticsPoints: 0,
           points: 0,
+          tieBreakerDistance: null,
         };
 
         setPredictions((current) => [nextPrediction, ...current]);
@@ -353,6 +761,19 @@ function App() {
     setView("submit");
   }
 
+  function focusPrediction(predictionId: string) {
+    setFocusedPredictionId(predictionId);
+    setView("predictions");
+  }
+
+  if (isAdminRoute) {
+    return (
+      <main className="app-shell">
+        <AdminView />
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -365,10 +786,18 @@ function App() {
           </p>
         </div>
 
-        <div className="deadline-panel">
-          <CalendarClock aria-hidden="true" />
-          <span>Tippningen stänger</span>
-          <strong>{formatDateTime.format(submissionDeadline)}</strong>
+        <div className="hero-panels">
+          <div className="deadline-panel">
+            <CalendarClock aria-hidden="true" />
+            <span>Tippningen stänger</span>
+            <strong>{formatDateTime.format(submissionDeadline)}</strong>
+          </div>
+
+          <div className="deadline-panel">
+            <SquareStack aria-hidden="true" />
+            <span>Inskickade tips just nu</span>
+            <strong>{predictions.length}</strong>
+          </div>
         </div>
       </section>
 
@@ -397,6 +826,14 @@ function App() {
         >
           <Trophy aria-hidden="true" />
           <span>Poängliga</span>
+        </button>
+        <button
+          className={view === "statistics" ? "active" : ""}
+          type="button"
+          onClick={() => setView("statistics")}
+        >
+          <BarChart3 aria-hidden="true" />
+          <span>Statistik</span>
         </button>
       </nav>
 
@@ -428,9 +865,18 @@ function App() {
         <ReceiptView prediction={receipt} onBack={returnToSubmitForm} />
       )}
 
-      {view === "predictions" && <PredictionsView predictions={predictions} />}
+      {view === "predictions" && (
+        <PredictionsView
+          focusedPredictionId={focusedPredictionId}
+          predictions={predictions}
+        />
+      )}
 
-      {view === "standings" && <StandingsView standings={standings} />}
+      {view === "standings" && (
+        <StandingsView onSelectPrediction={focusPrediction} standings={standings} />
+      )}
+
+      {view === "statistics" && <StatisticsView predictions={predictions} />}
     </main>
   );
 }
@@ -533,6 +979,370 @@ function ReceiptView({
   );
 }
 
+function mergeAdminResults(rows: Array<Record<string, any>>) {
+  const nextResults = structuredClone(initialAdminResults) as AdminResults;
+
+  for (const row of rows) {
+    if (row.result_type === "sweden_match") {
+      nextResults.swedenMatches = nextResults.swedenMatches.map((match) =>
+        match.id === row.result_key ? { ...match, ...row.result_payload } : match,
+      );
+    }
+
+    if (row.result_type === "group") {
+      nextResults.groups = nextResults.groups.map((group) =>
+        group.group === row.result_key ? { ...group, ...row.result_payload } : group,
+      );
+    }
+
+    if (row.result_type === "podium") {
+      nextResults.podium = { ...nextResults.podium, ...row.result_payload };
+    }
+
+    if (row.result_type === "statistics") {
+      nextResults.statistics = { ...nextResults.statistics, ...row.result_payload };
+    }
+
+    if (row.result_type === "tie_breaker") {
+      nextResults.tieBreaker = { ...nextResults.tieBreaker, ...row.result_payload };
+    }
+  }
+
+  return nextResults;
+}
+
+function AdminView() {
+  const [code, setCode] = useState("");
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [results, setResults] = useState<AdminResults>(initialAdminResults);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function callAdminFunction(action: "load" | "save", nextResults = results) {
+    if (!supabase) {
+      throw new Error("Supabase är inte konfigurerat.");
+    }
+
+    const { data, error: functionError } = await supabase.functions.invoke("admin-results", {
+      body: {
+        action,
+        code,
+        results: nextResults,
+      },
+    });
+
+    if (functionError) {
+      throw functionError;
+    }
+
+    return data;
+  }
+
+  async function unlockAdmin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setStatus("");
+
+    try {
+      const data = await callAdminFunction("load");
+      setResults(mergeAdminResults(data.results ?? []));
+      setIsUnlocked(true);
+      setStatus("Adminläge upplåst.");
+    } catch {
+      setError("Koden stämmer inte eller så kunde adminläget inte öppnas.");
+    }
+  }
+
+  async function saveAdminResults(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setStatus("");
+    setIsSaving(true);
+
+    try {
+      await callAdminFunction("save");
+      setStatus("Resultaten är sparade och poängen har räknats om.");
+    } catch {
+      setError("Kunde inte spara resultaten.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function updateAdminMatch(
+    index: number,
+    field: "homeGoals" | "awayGoals",
+    value: string,
+  ) {
+    setResults((current) => ({
+      ...current,
+      swedenMatches: current.swedenMatches.map((match, matchIndex) =>
+        matchIndex === index
+          ? { ...match, [field]: value === "" ? "" : Number(value) }
+          : match,
+      ),
+    }));
+  }
+
+  function updateAdminGroup(index: number, field: "winner" | "runnerUp", value: string) {
+    setResults((current) => ({
+      ...current,
+      groups: current.groups.map((group, groupIndex) =>
+        groupIndex === index ? { ...group, [field]: value } : group,
+      ),
+    }));
+  }
+
+  function updateAdminPodium(field: keyof AdminResults["podium"], value: string) {
+    setResults((current) => ({
+      ...current,
+      podium: {
+        ...current.podium,
+        [field]: value,
+      },
+    }));
+  }
+
+  function updateAdminStatistics(
+    field: keyof Omit<AdminResults["statistics"], "isFinal">,
+    value: string,
+  ) {
+    setResults((current) => ({
+      ...current,
+      statistics: {
+        ...current.statistics,
+        [field]: value === "" ? "" : Number(value),
+      },
+    }));
+  }
+
+  function updateTieBreaker(value: string) {
+    setResults((current) => ({
+      ...current,
+      tieBreaker: {
+        finalFirstGoalMinute: value === "" ? "" : Number(value),
+      },
+    }));
+  }
+
+  if (!isUnlocked) {
+    return (
+      <section className="panel admin-panel">
+        <div className="section-heading">
+          <h1>Admin</h1>
+          <p>Skriv admin-koden för att lägga in resultat.</p>
+        </div>
+        <form className="admin-login" onSubmit={unlockAdmin}>
+          <label>
+            Kod
+            <input
+              autoFocus
+              inputMode="numeric"
+              type="password"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+            />
+          </label>
+          {error && <span className="error">{error}</span>}
+          <button className="primary-button" type="submit">
+            Öppna admin
+          </button>
+        </form>
+      </section>
+    );
+  }
+
+  return (
+    <form className="content-grid" onSubmit={saveAdminResults}>
+      <section className="panel span-2">
+        <div className="section-heading">
+          <h1>Admin</h1>
+          <p>Lägg in faktiska resultat. När du sparar räknas poängen om.</p>
+        </div>
+        {status && <span className="success">{status}</span>}
+        {error && <span className="error">{error}</span>}
+      </section>
+
+      <section className="panel span-2">
+        <div className="section-heading">
+          <h2>Sveriges matcher</h2>
+          <p>När ett matchresultat är ifyllt gäller det direkt i poängräkningen.</p>
+        </div>
+        <div className="match-list">
+          {results.swedenMatches.map((match, index) => (
+            <div className="match-row" key={match.id}>
+              <div>
+                <strong>{match.label}</strong>
+                <span>
+                  {match.homeTeam} - {match.awayTeam}
+                </span>
+              </div>
+              <div className="score-inputs">
+                <input
+                  aria-label={`${match.homeTeam} mål`}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  type="text"
+                  value={match.homeGoals}
+                  onChange={(event) => updateAdminMatch(index, "homeGoals", event.target.value)}
+                />
+                <input
+                  aria-label={`${match.awayTeam} mål`}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  type="text"
+                  value={match.awayGoals}
+                  onChange={(event) => updateAdminMatch(index, "awayGoals", event.target.value)}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel span-2">
+        <div className="section-heading">
+          <h2>Gruppspel</h2>
+          <p>När gruppettor och grupptvåor är ifyllda gäller de direkt.</p>
+        </div>
+        <div className="group-grid">
+          {results.groups.map((group, index) => (
+            <div className="group-card" key={group.group}>
+              <strong>Grupp {group.group}</strong>
+              <select
+                value={group.winner}
+                onChange={(event) => updateAdminGroup(index, "winner", event.target.value)}
+              >
+                <option value="">Etta</option>
+                {groupTeams[group.group].map((team) => (
+                  <option key={team} value={team}>
+                    {team}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={group.runnerUp}
+                onChange={(event) => updateAdminGroup(index, "runnerUp", event.target.value)}
+              >
+                <option value="">Tvåa</option>
+                {groupTeams[group.group].map((team) => (
+                  <option key={team} value={team}>
+                    {team}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Topp 3</h2>
+          <p>När slutplaceringarna är ifyllda gäller de direkt.</p>
+        </div>
+        <div className="form-grid three">
+          {(["champion", "runnerUp", "thirdPlace"] as const).map((field, index) => (
+            <label key={field}>
+              {index === 0 ? "Vinnare" : index === 1 ? "Tvåa" : "Trea"}
+              <select
+                value={results.podium[field]}
+                onChange={(event) => updateAdminPodium(field, event.target.value)}
+              >
+                <option value="">Välj lag</option>
+                {teams.map((team) => (
+                  <option key={team} value={team}>
+                    {team}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Statistik</h2>
+          <p>Löpande siffror kan sparas utan att ge poäng.</p>
+        </div>
+        <div className="form-grid three">
+          <label>
+            Gula kort
+            <input
+              inputMode="numeric"
+              pattern="[0-9]*"
+              type="text"
+              value={results.statistics.yellowCards}
+              onChange={(event) => updateAdminStatistics("yellowCards", event.target.value)}
+            />
+          </label>
+          <label>
+            Röda kort
+            <input
+              inputMode="numeric"
+              pattern="[0-9]*"
+              type="text"
+              value={results.statistics.redCards}
+              onChange={(event) => updateAdminStatistics("redCards", event.target.value)}
+            />
+          </label>
+          <label>
+            Totalt antal mål
+            <input
+              inputMode="numeric"
+              pattern="[0-9]*"
+              type="text"
+              value={results.statistics.totalGoals}
+              onChange={(event) => updateAdminStatistics("totalGoals", event.target.value)}
+            />
+          </label>
+        </div>
+        <label className="checkbox-row">
+          <input
+            checked={results.statistics.isFinal}
+            type="checkbox"
+            onChange={(event) =>
+              setResults((current) => ({
+                ...current,
+                statistics: {
+                  ...current.statistics,
+                  isFinal: event.target.checked,
+                },
+              }))
+            }
+          />
+          Slutgiltigt resultat, räkna statistikpoäng
+        </label>
+      </section>
+
+      <section className="panel span-2 tiebreaker-panel">
+        <div className="section-heading">
+          <h2>Utslagsfråga</h2>
+          <p>Matchminut för första målet i finalen. Ger inte poäng.</p>
+        </div>
+        <label className="compact-field">
+          Matchminut
+          <input
+            inputMode="numeric"
+            pattern="[0-9]*"
+            type="text"
+            value={results.tieBreaker.finalFirstGoalMinute}
+            onChange={(event) => updateTieBreaker(event.target.value)}
+          />
+        </label>
+      </section>
+
+      <div className="submit-bar span-2">
+        <button className="primary-button" disabled={isSaving} type="submit">
+          {isSaving ? "Sparar" : "Spara resultat och räkna om"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 type SubmitViewProps = {
   form: PredictionForm;
   isSubmissionOpen: boolean;
@@ -576,6 +1386,7 @@ function SubmitView({
           <label>
             Förnamn
             <input
+              required
               value={form.contact.firstName}
               onChange={(event) => updateContact("firstName", event.target.value)}
             />
@@ -583,6 +1394,7 @@ function SubmitView({
           <label>
             Efternamn
             <input
+              required
               value={form.contact.lastName}
               onChange={(event) => updateContact("lastName", event.target.value)}
             />
@@ -591,6 +1403,7 @@ function SubmitView({
             Telefon
             <input
               inputMode="tel"
+              required
               value={form.contact.phone}
               onChange={(event) => updateContact("phone", event.target.value)}
             />
@@ -598,6 +1411,7 @@ function SubmitView({
           <label>
             E-post
             <input
+              required
               type="email"
               value={form.contact.email}
               onChange={(event) => updateContact("email", event.target.value)}
@@ -650,6 +1464,7 @@ function SubmitView({
                   inputMode="numeric"
                   min="0"
                   pattern="[0-9]*"
+                  required
                   type="text"
                   value={match.homeGoals}
                   onChange={(event) =>
@@ -661,6 +1476,7 @@ function SubmitView({
                   inputMode="numeric"
                   min="0"
                   pattern="[0-9]*"
+                  required
                   type="text"
                   value={match.awayGoals}
                   onChange={(event) =>
@@ -683,6 +1499,7 @@ function SubmitView({
             <div className="group-card" key={group.group}>
               <strong>Grupp {group.group}</strong>
               <select
+                required
                 value={group.winner}
                 onChange={(event) => updateGroup(index, "winner", event.target.value)}
               >
@@ -694,6 +1511,7 @@ function SubmitView({
                 ))}
               </select>
               <select
+                required
                 value={group.runnerUp}
                 onChange={(event) =>
                   updateGroup(index, "runnerUp", event.target.value)
@@ -720,6 +1538,7 @@ function SubmitView({
           <label>
             Världsmästare
             <select
+              required
               value={form.podium.champion}
               onChange={(event) => updatePodium("champion", event.target.value)}
             >
@@ -734,6 +1553,7 @@ function SubmitView({
           <label>
             Tvåa
             <select
+              required
               value={form.podium.runnerUp}
               onChange={(event) => updatePodium("runnerUp", event.target.value)}
             >
@@ -748,6 +1568,7 @@ function SubmitView({
           <label>
             Trea
             <select
+              required
               value={form.podium.thirdPlace}
               onChange={(event) => updatePodium("thirdPlace", event.target.value)}
             >
@@ -774,6 +1595,7 @@ function SubmitView({
               inputMode="numeric"
               min="0"
               pattern="[0-9]*"
+              required
               type="text"
               value={form.tournamentQuestions.yellowCards}
               onChange={(event) =>
@@ -787,6 +1609,7 @@ function SubmitView({
               inputMode="numeric"
               min="0"
               pattern="[0-9]*"
+              required
               type="text"
               value={form.tournamentQuestions.redCards}
               onChange={(event) =>
@@ -800,6 +1623,7 @@ function SubmitView({
               inputMode="numeric"
               min="0"
               pattern="[0-9]*"
+              required
               type="text"
               value={form.tournamentQuestions.totalGoals}
               onChange={(event) =>
@@ -824,6 +1648,7 @@ function SubmitView({
             inputMode="numeric"
             min="1"
             pattern="[0-9]*"
+            required
             type="text"
             value={form.tieBreaker.finalFirstGoalMinute}
             onChange={(event) =>
@@ -858,7 +1683,23 @@ function SubmitView({
   );
 }
 
-function PredictionsView({ predictions }: { predictions: PublicPrediction[] }) {
+function PredictionsView({
+  focusedPredictionId,
+  predictions,
+}: {
+  focusedPredictionId: string | null;
+  predictions: PublicPrediction[];
+}) {
+  useEffect(() => {
+    if (!focusedPredictionId) {
+      return;
+    }
+
+    const element = document.getElementById(`prediction-${focusedPredictionId}`);
+    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+    element?.focus({ preventScroll: true });
+  }, [focusedPredictionId]);
+
   return (
     <section className="panel">
       <div className="section-heading">
@@ -867,7 +1708,16 @@ function PredictionsView({ predictions }: { predictions: PublicPrediction[] }) {
       </div>
       <div className="prediction-list">
         {predictions.map((prediction) => (
-          <article className="prediction-card" key={prediction.id}>
+          <article
+            className={
+              prediction.id === focusedPredictionId
+                ? "prediction-card focused"
+                : "prediction-card"
+            }
+            id={`prediction-${prediction.id}`}
+            key={prediction.id}
+            tabIndex={-1}
+          >
             <header>
               <strong>{prediction.initials}</strong>
               <span>{formatDateTime.format(new Date(prediction.submittedAt))}</span>
@@ -914,8 +1764,366 @@ function PredictionsView({ predictions }: { predictions: PublicPrediction[] }) {
   );
 }
 
-function StandingsView({ standings }: { standings: PublicPrediction[] }) {
+function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
+  const total = predictions.length;
+  const swedenGroupPredictions = predictions
+    .map((prediction) =>
+      prediction.groups.find((groupPrediction) => groupPrediction.group === "F"),
+    )
+    .filter((prediction): prediction is GroupPrediction => Boolean(prediction));
+  const swedenAsWinner = swedenGroupPredictions.filter(
+    (prediction) => prediction.winner === "Sverige",
+  ).length;
+  const swedenAsRunnerUp = swedenGroupPredictions.filter(
+    (prediction) => prediction.runnerUp === "Sverige",
+  ).length;
+  const swedenAdvanceCount = swedenAsWinner + swedenAsRunnerUp;
+  const swedenAdvancePercentage =
+    swedenGroupPredictions.length > 0
+      ? Math.round((swedenAdvanceCount / swedenGroupPredictions.length) * 100)
+      : 0;
+  const swedenExpectedPoints =
+    total > 0
+      ? Math.round(
+          predictions.reduce(
+            (sum, prediction) => sum + getSwedenPointsFromPrediction(prediction),
+            0,
+          ) / total,
+        )
+      : 0;
+  const commonFinals = getTopCounts(
+    predictions.map((prediction) =>
+      prediction.podium.champion && prediction.podium.runnerUp
+        ? `${prediction.podium.champion} - ${prediction.podium.runnerUp}`
+        : "",
+    ),
+    3,
+  );
+  const consensusItems = getConsensusItems(predictions);
+  const mostAgreedItem = [...consensusItems].sort(
+    (first, second) => second.percentage - first.percentage,
+  )[0];
+  const mostSplitItem = [...consensusItems].sort(
+    (first, second) => first.percentage - second.percentage,
+  )[0];
+
+  const numericSummaries = [
+    {
+      label: "Gula kort",
+      summary: getNumericSummary(
+        predictions.map((prediction) => prediction.tournamentQuestions.yellowCards),
+      ),
+    },
+    {
+      label: "Röda kort",
+      summary: getNumericSummary(
+        predictions.map((prediction) => prediction.tournamentQuestions.redCards),
+      ),
+    },
+    {
+      label: "Totalt antal mål",
+      summary: getNumericSummary(
+        predictions.map((prediction) => prediction.tournamentQuestions.totalGoals),
+      ),
+    },
+    {
+      label: "Finalens första mål",
+      summary: getNumericSummary(
+        predictions.map((prediction) => prediction.tieBreaker.finalFirstGoalMinute),
+      ),
+    },
+  ];
+
+  return (
+    <section className="panel statistics-page">
+      <div className="section-heading with-icon">
+        <BarChart3 aria-hidden="true" />
+        <div>
+          <h2>Statistik</h2>
+          <p>Sammanställning av inskickade tips. Baserat på {total} inskick.</p>
+        </div>
+      </div>
+
+      {total === 0 ? (
+        <div className="notice">Det finns inga inskickade tips att sammanställa ännu.</div>
+      ) : (
+        <div className="statistics-sections">
+          <section>
+            <h3>Snabbkoll</h3>
+            <div className="insight-grid">
+              <article className="insight-card">
+                <span>Vanligaste finalen</span>
+                <strong>{commonFinals[0]?.label ?? "Saknas"}</strong>
+                <p>{commonFinals[0]?.percentage ?? 0}% har tippat så.</p>
+              </article>
+              <article className="insight-card">
+                <span>Sverige vidare</span>
+                <strong>{swedenAdvancePercentage}%</strong>
+                <p>
+                  {swedenAsWinner} som gruppetta, {swedenAsRunnerUp} som grupptvåa.
+                </p>
+              </article>
+              <article className="insight-card">
+                <span>Sveriges förväntade gruppoäng</span>
+                <strong>{swedenExpectedPoints} p</strong>
+                <p>Baserat på de tippade resultaten i Sveriges matcher.</p>
+              </article>
+              <article className="insight-card">
+                <span>Mest eniga fråga</span>
+                <strong>{mostAgreedItem?.label ?? "Saknas"}</strong>
+                <p>
+                  {mostAgreedItem?.topLabel ?? ""} leder med{" "}
+                  {mostAgreedItem?.percentage ?? 0}%.
+                </p>
+              </article>
+              <article className="insight-card">
+                <span>Mest splittrad fråga</span>
+                <strong>{mostSplitItem?.label ?? "Saknas"}</strong>
+                <p>
+                  {mostSplitItem?.topLabel ?? ""} är vanligast, men bara med{" "}
+                  {mostSplitItem?.percentage ?? 0}%.
+                </p>
+              </article>
+            </div>
+          </section>
+
+          <section>
+            <h3>Sveriges matcher</h3>
+            <div className="stats-card-grid">
+              {initialSwedenMatches.map((match) => {
+                const topResults = getTopCounts(
+                  predictions.map((prediction) => {
+                    const predictionMatch = prediction.swedenMatches.find(
+                      (candidate) => candidate.id === match.id,
+                    );
+
+                    return predictionMatch
+                      ? formatPredictionScore(
+                          predictionMatch.homeGoals,
+                          predictionMatch.awayGoals,
+                        )
+                      : "";
+                  }),
+                  3,
+                );
+
+                return (
+                  <article className="stats-card" key={match.id}>
+                    <h4>
+                      {match.homeTeam} - {match.awayTeam}
+                    </h4>
+                    <div className="result-percent-list">
+                      {topResults.map((result, index) => (
+                        <div
+                          className={
+                            index === 0
+                              ? "result-percent-row leading"
+                              : "result-percent-row"
+                          }
+                          key={result.label}
+                        >
+                          <span>{result.label}</span>
+                          <strong>{result.percentage}%</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <section>
+            <h3>Gruppspel</h3>
+            <div className="group-stat-grid">
+              {groups.map((group) => {
+                const winnerCounts = getCountsForLabels(
+                  predictions.map(
+                    (prediction) =>
+                      prediction.groups.find((groupPrediction) => groupPrediction.group === group)
+                        ?.winner ?? "",
+                  ),
+                  groupTeams[group],
+                );
+                const runnerUpCounts = getCountsForLabels(
+                  predictions.map(
+                    (prediction) =>
+                      prediction.groups.find((groupPrediction) => groupPrediction.group === group)
+                        ?.runnerUp ?? "",
+                  ),
+                  groupTeams[group],
+                );
+                const leadingRunnerUpPercentage = Math.max(
+                  ...runnerUpCounts.map((item) => item.percentage),
+                );
+                const sortedTeams = [...groupTeams[group]].sort((firstTeam, secondTeam) => {
+                  const firstWinner = winnerCounts.find((item) => item.label === firstTeam);
+                  const secondWinner = winnerCounts.find((item) => item.label === secondTeam);
+                  const firstRunnerUp = runnerUpCounts.find((item) => item.label === firstTeam);
+                  const secondRunnerUp = runnerUpCounts.find((item) => item.label === secondTeam);
+                  const winnerDifference =
+                    (secondWinner?.percentage ?? 0) - (firstWinner?.percentage ?? 0);
+
+                  if (winnerDifference !== 0) {
+                    return winnerDifference;
+                  }
+
+                  const runnerUpDifference =
+                    (secondRunnerUp?.percentage ?? 0) - (firstRunnerUp?.percentage ?? 0);
+
+                  if (runnerUpDifference !== 0) {
+                    return runnerUpDifference;
+                  }
+
+                  return firstTeam.localeCompare(secondTeam, "sv-SE");
+                });
+
+                return (
+                  <article className="stats-card" key={group}>
+                    <h4>Grupp {group}</h4>
+                    <div className="grouped-bars">
+                      {sortedTeams.map((team, index) => {
+                        const winner = winnerCounts.find((item) => item.label === team);
+                        const runnerUp = runnerUpCounts.find((item) => item.label === team);
+                        const runnerUpPercentage = runnerUp?.percentage ?? 0;
+
+                        return (
+                          <div className="team-bar-row" key={team}>
+                            <strong>{team}</strong>
+                            <div className="dual-bars">
+                              <BarRow
+                                item={{
+                                  label: "Etta",
+                                  count: winner?.count ?? 0,
+                                  percentage: winner?.percentage ?? 0,
+                                }}
+                                isLeading={index === 0}
+                              />
+                              <BarRow
+                                item={{
+                                  label: "Tvåa",
+                                  count: runnerUp?.count ?? 0,
+                                  percentage: runnerUpPercentage,
+                                }}
+                                isLeading={
+                                  runnerUpPercentage === leadingRunnerUpPercentage &&
+                                  leadingRunnerUpPercentage > 0
+                                }
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <section>
+            <h3>Topp 3</h3>
+            <div className="stats-card-grid">
+              {[
+                { label: "Världsmästare", field: "champion" as const },
+                { label: "Tvåa", field: "runnerUp" as const },
+                { label: "Trea", field: "thirdPlace" as const },
+              ].map((podiumSlot) => (
+                <article className="stats-card" key={podiumSlot.field}>
+                  <h4>{podiumSlot.label}</h4>
+                  <div className="bar-list">
+                    {getTopCounts(
+                      predictions.map((prediction) => prediction.podium[podiumSlot.field]),
+                      5,
+                    ).map((item, index) => (
+                      <BarRow item={item} isLeading={index === 0} key={item.label} />
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <h3>Statistik och utslagsfråga</h3>
+            <div className="summary-stat-grid">
+              {numericSummaries.map((entry) => (
+                <article className="stats-card" key={entry.label}>
+                  <h4>{entry.label}</h4>
+                  {entry.summary ? (
+                    <div className="summary-stat-table">
+                      <span>Min</span>
+                      <strong>{entry.summary.min}</strong>
+                      <span>Max</span>
+                      <strong>{entry.summary.max}</strong>
+                      <span>Vanligast spann</span>
+                      <strong>
+                        {entry.summary.typicalRange.from}-{entry.summary.typicalRange.to}
+                      </strong>
+                    </div>
+                  ) : (
+                    <p>Inga svar ännu.</p>
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BarRow({
+  isLeading = false,
+  item,
+}: {
+  isLeading?: boolean;
+  item: {
+    label: string;
+    count: number;
+    percentage: number;
+  };
+}) {
+  return (
+    <div className={isLeading ? "bar-row leading" : "bar-row"}>
+      <div className="bar-row-label">
+        <span>{item.label}</span>
+        <strong>{item.percentage}%</strong>
+      </div>
+      <div className="bar-track">
+        <span style={{ width: `${item.percentage}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function StandingsView({
+  onSelectPrediction,
+  standings,
+}: {
+  onSelectPrediction: (predictionId: string) => void;
+  standings: PublicPrediction[];
+}) {
   const [filter, setFilter] = useState<PredictionFilter>("all");
+  const filteredStandings = useMemo(
+    () =>
+      [...standings].sort((firstPrediction, secondPrediction) => {
+        const pointDifference =
+          getFilteredPoints(secondPrediction, filter) -
+          getFilteredPoints(firstPrediction, filter);
+
+        if (pointDifference !== 0) {
+          return pointDifference;
+        }
+
+        return firstPrediction.initials.localeCompare(secondPrediction.initials, "sv-SE");
+      }),
+    [filter, standings],
+  );
+  const activeFilterLabel =
+    predictionFilters.find((predictionFilter) => predictionFilter.id === filter)?.label ??
+    "Totalt";
 
   return (
     <section className="panel">
@@ -924,8 +2132,7 @@ function StandingsView({ standings }: { standings: PublicPrediction[] }) {
         <div>
           <h2>Poängliga</h2>
           <p>
-            Sorterad efter totalpoäng. Filtren för delområden aktiveras när
-            poängberäkningen är uppdelad per område.
+            Sortera på totalpoäng eller ett enskilt poängområde.
           </p>
         </div>
       </div>
@@ -945,13 +2152,19 @@ function StandingsView({ standings }: { standings: PublicPrediction[] }) {
         <div className="table-row table-head" role="row">
           <span>Placering</span>
           <span>Deltagare</span>
-          <span>Poäng</span>
+          <span>{activeFilterLabel}</span>
         </div>
-        {standings.map((prediction, index) => (
+        {filteredStandings.map((prediction, index) => (
           <div className="table-row" role="row" key={prediction.id}>
             <span>{index + 1}</span>
-            <strong>{prediction.initials}</strong>
-            <span>{prediction.points}</span>
+            <button
+              className="initials-link"
+              type="button"
+              onClick={() => onSelectPrediction(prediction.id)}
+            >
+              {prediction.initials}
+            </button>
+            <span>{getFilteredPoints(prediction, filter)}</span>
           </div>
         ))}
       </div>

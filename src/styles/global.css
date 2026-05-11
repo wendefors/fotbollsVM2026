@@ -90,10 +90,16 @@ h3 {
   line-height: 1.6;
 }
 
+.hero-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 12px;
+}
+
 .deadline-panel {
   display: grid;
   gap: 4px;
-  min-width: 250px;
+  min-width: 0;
   padding: 18px;
   border: 1px solid #d7ded2;
   border-radius: 8px;
@@ -116,7 +122,7 @@ h3 {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin: 8px 0 18px;
 }
@@ -176,6 +182,16 @@ h3 {
   border-radius: 8px;
   background: #fff8e8;
   color: #614a1f;
+}
+
+.admin-panel {
+  max-width: 520px;
+  margin: 40px auto;
+}
+
+.admin-login {
+  display: grid;
+  gap: 16px;
 }
 
 .receipt-panel {
@@ -375,6 +391,18 @@ h3 {
 
 .compact-field {
   max-width: 260px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.checkbox-row input {
+  width: 20px;
+  min-height: 20px;
 }
 
 .tiebreaker-panel {
@@ -602,6 +630,15 @@ input[type="number"] {
   background: #fbfcf9;
 }
 
+.prediction-card.focused {
+  border-color: #c95d3f;
+  box-shadow: 0 0 0 3px rgb(201 93 63 / 18%);
+}
+
+.prediction-card:focus {
+  outline: none;
+}
+
 .prediction-card header {
   display: flex;
   justify-content: space-between;
@@ -622,6 +659,200 @@ input[type="number"] {
 
 .prediction-columns p {
   margin-bottom: 5px;
+}
+
+.statistics-sections {
+  display: grid;
+  gap: 28px;
+}
+
+.statistics-sections h3 {
+  margin-bottom: 12px;
+  font-size: 1.18rem;
+}
+
+.stats-card-grid,
+.summary-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.insight-card {
+  border: 1px solid #e1e7dd;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f4f7f1;
+}
+
+.insight-card span {
+  display: block;
+  margin-bottom: 8px;
+  color: #526960;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.insight-card strong {
+  display: block;
+  color: #143c35;
+  font-size: 1.15rem;
+  line-height: 1.15;
+}
+
+.insight-card p {
+  margin: 8px 0 0;
+  color: #526960;
+  font-size: 0.92rem;
+}
+
+.group-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stats-card {
+  border: 1px solid #e1e7dd;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcf9;
+}
+
+.stats-card h4 {
+  margin: 0 0 12px;
+  color: #143c35;
+  font-size: 1rem;
+}
+
+.bar-list {
+  display: grid;
+  gap: 12px;
+}
+
+.bar-row {
+  display: grid;
+  gap: 5px;
+}
+
+.bar-row-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #526960;
+  font-size: 0.92rem;
+}
+
+.bar-row-label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-row-label strong {
+  color: #143c35;
+}
+
+.bar-row.leading .bar-row-label span,
+.result-percent-row.leading span {
+  color: #143c35;
+  font-weight: 700;
+}
+
+.bar-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e3e9df;
+}
+
+.bar-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #c95d3f;
+}
+
+.bar-row.leading .bar-track span {
+  background: #143c35;
+}
+
+.result-percent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.result-percent-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #edf0ea;
+  color: #526960;
+}
+
+.result-percent-row:last-child {
+  border-bottom: 0;
+}
+
+.result-percent-row strong {
+  color: #143c35;
+  white-space: nowrap;
+}
+
+.result-percent-row.leading {
+  color: #143c35;
+}
+
+.grouped-bars {
+  display: grid;
+  gap: 16px;
+}
+
+.team-bar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 10px;
+  align-items: start;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #edf0ea;
+}
+
+.team-bar-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.team-bar-row > strong {
+  color: #143c35;
+  font-size: 0.92rem;
+}
+
+.dual-bars {
+  display: grid;
+  gap: 4px;
+}
+
+.dual-bars .bar-row {
+  gap: 3px;
+}
+
+.summary-stat-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  color: #526960;
+}
+
+.summary-stat-table strong {
+  color: #143c35;
 }
 
 .standings-table {
@@ -647,6 +878,17 @@ input[type="number"] {
   font-weight: 700;
 }
 
+.initials-link {
+  justify-self: start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #143c35;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 @media (max-width: 860px) {
   .app-shell {
     width: min(100% - 24px, 1180px);
@@ -659,12 +901,20 @@ input[type="number"] {
   .form-grid.three,
   .prediction-columns,
   .receipt-hero,
-  .receipt-grid {
+  .receipt-grid,
+  .insight-grid,
+  .stats-card-grid,
+  .summary-stat-grid,
+  .group-stat-grid {
     grid-template-columns: 1fr;
   }
 
   .deadline-panel {
     min-width: 0;
+  }
+
+  .hero-panels {
+    grid-template-columns: 1fr;
   }
 
   .group-summary-grid {
@@ -697,8 +947,8 @@ input[type="number"] {
   .tabs button {
     gap: 5px;
     min-width: 0;
-    padding: 0 6px;
-    font-size: 0.82rem;
+    padding: 0 4px;
+    font-size: 0.75rem;
   }
 
   .tabs .desktop-label {
@@ -710,8 +960,12 @@ input[type="number"] {
   }
 
   .tabs svg {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
+  }
+
+  .team-bar-row {
+    grid-template-columns: 1fr;
   }
 
   .group-card {

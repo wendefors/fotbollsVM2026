@@ -70,7 +70,12 @@ export type PublicPrediction = {
   podium: PodiumPrediction;
   tournamentQuestions: TournamentQuestions;
   tieBreaker: TieBreakerPrediction;
+  swedenPoints: number;
+  groupPoints: number;
+  podiumPoints: number;
+  statisticsPoints: number;
   points: number;
+  tieBreakerDistance: number | null;
 };
 
 export type ScoreRule = {
