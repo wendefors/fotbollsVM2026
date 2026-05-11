@@ -33,7 +33,11 @@ Implementerade huvudfunktioner:
 - Tippningsformuläret innehåller nu extra turneringsfrågor: totalt antal gula kort, röda kort och mål i hela turneringen.
 - Formuläret innehåller även en utslagsfråga: matchminut för första målet i finalen, endast för att skilja tippare åt vid lika poäng.
 - Heroytan visar både deadline och aktuellt antal inskickade tips.
+- Före deadline visas inte `Samtliga tippningar` och `Statistik`. När tippningen stänger 2026-06-11 22:00 döljs `Skicka in` och de två vyerna visas.
 - Viktad testdata kan skapas med `scripts/seed-weighted-test-data.mjs`. Scriptet gör endast inserts av nya testdeltagare/tips och använder unika e-postadresser per körning.
+- Read-only Supabase-audit kan köras med `scripts/audit-readonly.mjs`; testrapporten finns i `docs/test-report-2026-05-11.md`.
+- Skarpa inskick går via Postgres RPC:n `submit_prediction`, som validerar payloaden server-side och sparar deltagare + tips atomärt. Direkta anon-inserts till `participants` och `predictions` är indragna.
+- Appen använder inte längre lokal sampledata som fallback när Supabase-hämtning misslyckas; publika tips har loading/error-state.
 - Tippningssidans blockordning är: kontakt, poängregler, Sveriges matcher, gruppspel, topp 3, turneringsfrågor och utslagsfråga.
 - Regelblocket heter `Regler och poäng`. Ingressen innehåller deltagaravgift: 50 kr via Swish till Gustav, 070-309 26 43, samt att vinnaren tar allt. Brickorna i blocket visar endast poängreglerna.
 - Alla gamla dummy-inskick i Supabase är rensade.
@@ -66,7 +70,7 @@ Teknisk stack:
 
 - `src/App.tsx` innehåller första versionen av applikationens vyer och formulärlogik.
 - `src/data/tournament.ts` innehåller deadline, manuella VM-grupper, gruppspecifika laglistor, Sveriges matcher och poängregler.
-- `src/data/samplePredictions.ts` ger lokal exempeldata när Supabase inte är anslutet.
+- `src/data/samplePredictions.ts` finns kvar som historisk/dev-exempeldata, men appen använder den inte längre som fallback.
 - `src/lib/supabase.ts` skapar Supabase-klienten när `VITE_SUPABASE_URL` och `VITE_SUPABASE_ANON_KEY` finns.
 - `supabase/migrations/20260508190000_initial_schema.sql` definierar första databasschemat.
 - `.env.local` används lokalt för Supabase URL och anon/public key och ska inte versioneras.
@@ -133,6 +137,7 @@ Arbetet ska följa projektets angivna principer:
 - Håll UI:t modernt, rent och lättläst med DM Sans som primär typografi.
 - Uppdatera denna kontextfil löpande när beslut, arkitektur eller status förändras.
 - Kör aldrig destruktiv datarensning i Supabase utan verifierad read-only kontroll, backup/arkivering och uttrycklig bekräftelse efter att kandidatlistan visats. Data cleanup ska inte ske via migrationer; följ `docs/data-safety.md`.
+- Alla testinskick rensades 2026-05-11 efter backup och uttrycklig bekräftelse. Verifierat efteråt: 0 participants, 0 predictions, 0 prediction_scores och 0 public_predictions. Backupfiler ligger lokalt i `backups/`, som är git-ignorerad.
 
 ## 6. Nästa steg
 

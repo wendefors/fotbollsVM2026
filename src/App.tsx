@@ -22,7 +22,6 @@ import {
   submissionDeadline,
   teams,
 } from "./data/tournament";
-import { samplePredictions } from "./data/samplePredictions";
 import { createId } from "./lib/id";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type { GroupPrediction, PredictionForm, PublicPrediction } from "./lib/types";
@@ -34,6 +33,7 @@ type PredictionFilter =
   | "groups"
   | "podium"
   | "questions";
+type PredictionLoadState = "idle" | "loading" | "loaded" | "error";
 
 type AdminResults = {
   swedenMatches: Array<{
@@ -512,13 +512,18 @@ function App() {
   const isAdminRoute = new URLSearchParams(window.location.search).has("admin");
   const [view, setView] = useState<View>("submit");
   const [form, setForm] = useState<PredictionForm>(initialForm);
-  const [predictions, setPredictions] = useState<PublicPrediction[]>(samplePredictions);
+  const [predictions, setPredictions] = useState<PublicPrediction[]>([]);
+  const [predictionLoadState, setPredictionLoadState] = useState<PredictionLoadState>(
+    isSupabaseConfigured ? "loading" : "loaded",
+  );
+  const [predictionLoadError, setPredictionLoadError] = useState("");
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [receipt, setReceipt] = useState<PublicPrediction | null>(null);
   const [focusedPredictionId, setFocusedPredictionId] = useState<string | null>(null);
-  const isSubmissionOpen = Date.now() <= submissionDeadline.getTime();
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  const isSubmissionOpen = currentTime <= submissionDeadline.getTime();
 
   const standings = useMemo(
     () => [...predictions].sort((a, b) => b.points - a.points),
@@ -528,8 +533,12 @@ function App() {
   useEffect(() => {
     async function loadPredictions() {
       if (!supabase) {
+        setPredictionLoadState("loaded");
         return;
       }
+
+      setPredictionLoadState("loading");
+      setPredictionLoadError("");
 
       const { data, error } = await supabase
         .from("public_predictions")
@@ -537,6 +546,9 @@ function App() {
         .order("created_at", { ascending: false });
 
       if (error || !data) {
+        setPredictions([]);
+        setPredictionLoadState("error");
+        setPredictionLoadError("Kunde inte hämta inskickade tips just nu.");
         return;
       }
 
@@ -558,10 +570,30 @@ function App() {
           tieBreakerDistance: prediction.tie_breaker_distance ?? null,
         })),
       );
+      setPredictionLoadState("loaded");
     }
 
     void loadPredictions();
   }, []);
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 30_000);
+
+    return () => window.clearInterval(timerId);
+  }, []);
+
+  useEffect(() => {
+    if (isSubmissionOpen && (view === "predictions" || view === "statistics")) {
+      setView("standings");
+      return;
+    }
+
+    if (!isSubmissionOpen && view === "submit") {
+      setView("standings");
+    }
+  }, [isSubmissionOpen, view]);
 
   function updateContact(field: keyof PredictionForm["contact"], value: string) {
     setForm((current) => ({
@@ -671,37 +703,31 @@ function App() {
 
     try {
       if (supabase) {
-        const participantId = createId();
-        const { error: participantError } = await supabase.from("participants").insert({
-          id: participantId,
-          first_name: form.contact.firstName.trim(),
-          last_name: form.contact.lastName.trim(),
-          phone: form.contact.phone.trim(),
-          email: form.contact.email.trim().toLowerCase(),
-        });
+        const { data: predictionId, error: submitPredictionError } = await supabase.rpc(
+          "submit_prediction",
+          {
+            contact_payload: {
+              firstName: form.contact.firstName.trim(),
+              lastName: form.contact.lastName.trim(),
+              phone: form.contact.phone.trim(),
+              email: form.contact.email.trim().toLowerCase(),
+            },
+            prediction_payload: {
+              swedenMatches: form.swedenMatches,
+              groups: form.groups,
+              podium: form.podium,
+              tournamentQuestions: form.tournamentQuestions,
+              tieBreaker: form.tieBreaker,
+            },
+          },
+        );
 
-        if (participantError) {
-          if (participantError.code === "23505") {
+        if (submitPredictionError || !predictionId) {
+          if (submitPredictionError?.code === "23505") {
             setSubmitError("Den e-postadressen har redan använts för ett inskick.");
             return;
           }
 
-          setSubmitError("Kunde inte spara kontaktuppgifterna. Försök igen.");
-          return;
-        }
-
-        const predictionId = createId();
-        const { error: predictionError } = await supabase.from("predictions").insert({
-          id: predictionId,
-          participant_id: participantId,
-          sweden_matches: form.swedenMatches,
-          group_predictions: form.groups,
-          podium: form.podium,
-          tournament_questions: form.tournamentQuestions,
-          tie_breaker: form.tieBreaker,
-        });
-
-        if (predictionError) {
           setSubmitError("Kunde inte spara tippningen. Försök igen.");
           return;
         }
@@ -719,6 +745,8 @@ function App() {
           submittedPrediction,
           ...current,
         ]);
+        setPredictionLoadState("loaded");
+        setPredictionLoadError("");
         setReceipt(submittedPrediction);
       } else {
         const initials = getInitials(form.contact.firstName, form.contact.lastName) || "XX";
@@ -802,23 +830,27 @@ function App() {
       </section>
 
       <nav className="tabs" aria-label="Huvudvyer">
-        <button
-          className={view === "submit" ? "active" : ""}
-          type="button"
-          onClick={() => setView("submit")}
-        >
-          <Send aria-hidden="true" />
-          <span>Skicka in</span>
-        </button>
-        <button
-          className={view === "predictions" ? "active" : ""}
-          type="button"
-          onClick={() => setView("predictions")}
-        >
-          <Eye aria-hidden="true" />
-          <span className="desktop-label">Samtliga tippningar</span>
-          <span className="mobile-label">Tips</span>
-        </button>
+        {isSubmissionOpen && (
+          <button
+            className={view === "submit" ? "active" : ""}
+            type="button"
+            onClick={() => setView("submit")}
+          >
+            <Send aria-hidden="true" />
+            <span>Skicka in</span>
+          </button>
+        )}
+        {!isSubmissionOpen && (
+          <button
+            className={view === "predictions" ? "active" : ""}
+            type="button"
+            onClick={() => setView("predictions")}
+          >
+            <Eye aria-hidden="true" />
+            <span className="desktop-label">Samtliga tippningar</span>
+            <span className="mobile-label">Tips</span>
+          </button>
+        )}
         <button
           className={view === "standings" ? "active" : ""}
           type="button"
@@ -827,24 +859,38 @@ function App() {
           <Trophy aria-hidden="true" />
           <span>Poängliga</span>
         </button>
-        <button
-          className={view === "statistics" ? "active" : ""}
-          type="button"
-          onClick={() => setView("statistics")}
-        >
-          <BarChart3 aria-hidden="true" />
-          <span>Statistik</span>
-        </button>
+        {!isSubmissionOpen && (
+          <button
+            className={view === "statistics" ? "active" : ""}
+            type="button"
+            onClick={() => setView("statistics")}
+          >
+            <BarChart3 aria-hidden="true" />
+            <span>Statistik</span>
+          </button>
+        )}
       </nav>
 
       {!isSupabaseConfigured && (
         <div className="notice">
-          Supabase är förberett men inte anslutet. Formuläret sparar därför lokalt i
-          denna session tills miljövariabler och tabeller är på plats.
+          Supabase är förberett men inte anslutet. Formuläret sparar därför bara
+          lokalt i denna session.
         </div>
       )}
 
-      {view === "submit" && (
+      {predictionLoadState === "loading" && (
+        <div className="notice">
+          Hämtar inskickade tips...
+        </div>
+      )}
+
+      {predictionLoadState === "error" && (
+        <div className="notice warning">
+          {predictionLoadError}
+        </div>
+      )}
+
+      {view === "submit" && isSubmissionOpen && (
         <SubmitView
           form={form}
           isSubmissionOpen={isSubmissionOpen}
@@ -865,7 +911,7 @@ function App() {
         <ReceiptView prediction={receipt} onBack={returnToSubmitForm} />
       )}
 
-      {view === "predictions" && (
+      {view === "predictions" && !isSubmissionOpen && (
         <PredictionsView
           focusedPredictionId={focusedPredictionId}
           predictions={predictions}
@@ -876,7 +922,9 @@ function App() {
         <StandingsView onSelectPrediction={focusPrediction} standings={standings} />
       )}
 
-      {view === "statistics" && <StatisticsView predictions={predictions} />}
+      {view === "statistics" && !isSubmissionOpen && (
+        <StatisticsView predictions={predictions} />
+      )}
     </main>
   );
 }

@@ -184,6 +184,12 @@ h3 {
   color: #614a1f;
 }
 
+.notice.warning {
+  border-color: #e1b1a2;
+  background: #fff3ef;
+  color: #8f341d;
+}
+
 .admin-panel {
   max-width: 520px;
   margin: 40px auto;
