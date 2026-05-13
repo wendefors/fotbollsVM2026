@@ -1,6 +1,7 @@
 node_modules
 dist
 backups
+project_context.md
 .env
 .env.local
 .DS_Store
