@@ -34,6 +34,12 @@ type PredictionFilter =
   | "podium"
   | "questions";
 type PredictionLoadState = "idle" | "loading" | "loaded" | "error";
+type LiveTournamentStats = {
+  yellowCards: number | "";
+  redCards: number | "";
+  totalGoals: number | "";
+  updatedAt: string | null;
+};
 
 type AdminResults = {
   swedenMatches: Array<{
@@ -72,6 +78,12 @@ const predictionFilters: Array<{ id: PredictionFilter; label: string }> = [
   { id: "podium", label: "Topp 3" },
   { id: "questions", label: "Statistik" },
 ];
+
+const formatDateOnly = new Intl.DateTimeFormat("sv-SE", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
 
 function getFilteredPoints(prediction: PublicPrediction, filter: PredictionFilter) {
   if (filter === "sweden") {
@@ -509,7 +521,9 @@ async function waitForPublicPrediction(predictionId: string) {
 }
 
 function App() {
-  const isAdminRoute = new URLSearchParams(window.location.search).has("admin");
+  const searchParams = new URLSearchParams(window.location.search);
+  const isAdminRoute = searchParams.has("admin");
+  const isClosedPreview = import.meta.env.DEV && searchParams.get("preview") === "closed";
   const [view, setView] = useState<View>("submit");
   const [form, setForm] = useState<PredictionForm>(initialForm);
   const [predictions, setPredictions] = useState<PublicPrediction[]>([]);
@@ -522,8 +536,10 @@ function App() {
   const [submitError, setSubmitError] = useState("");
   const [receipt, setReceipt] = useState<PublicPrediction | null>(null);
   const [focusedPredictionId, setFocusedPredictionId] = useState<string | null>(null);
+  const [liveTournamentStats, setLiveTournamentStats] = useState<LiveTournamentStats | null>(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
-  const isSubmissionOpen = currentTime <= submissionDeadline.getTime();
+  const isSubmissionOpen =
+    !isClosedPreview && currentTime <= submissionDeadline.getTime();
 
   const standings = useMemo(
     () => [...predictions].sort((a, b) => b.points - a.points),
@@ -574,6 +590,35 @@ function App() {
     }
 
     void loadPredictions();
+  }, []);
+
+  useEffect(() => {
+    async function loadLiveTournamentStats() {
+      if (!supabase) {
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("tournament_results")
+        .select("result_payload,updated_at")
+        .eq("result_type", "statistics")
+        .eq("result_key", "totals")
+        .maybeSingle();
+
+      if (error || !data) {
+        setLiveTournamentStats(null);
+        return;
+      }
+
+      setLiveTournamentStats({
+        yellowCards: data.result_payload?.yellowCards ?? "",
+        redCards: data.result_payload?.redCards ?? "",
+        totalGoals: data.result_payload?.totalGoals ?? "",
+        updatedAt: data.updated_at ?? null,
+      });
+    }
+
+    void loadLiveTournamentStats();
   }, []);
 
   useEffect(() => {
@@ -815,17 +860,49 @@ function App() {
         </div>
 
         <div className="hero-panels">
-          <div className="deadline-panel">
-            <CalendarClock aria-hidden="true" />
-            <span>Tippningen stänger</span>
-            <strong>{formatDateTime.format(submissionDeadline)}</strong>
-          </div>
+          {isSubmissionOpen && (
+            <div className="deadline-panel">
+              <CalendarClock aria-hidden="true" />
+              <span>Tippningen stänger</span>
+              <strong>{formatDateTime.format(submissionDeadline)}</strong>
+            </div>
+          )}
 
           <div className="deadline-panel">
             <SquareStack aria-hidden="true" />
-            <span>Inskickade tips just nu</span>
+            <span>
+              {isSubmissionOpen
+                ? "Inskickade tips just nu"
+                : "Antal tippare i tävlingen"}
+            </span>
             <strong>{predictions.length}</strong>
           </div>
+
+          {!isSubmissionOpen && (
+            <div className="deadline-panel live-stats-panel">
+              <BarChart3 aria-hidden="true" />
+              <span>Statistik</span>
+              <div className="live-stat-grid">
+                <div>
+                  <strong>{liveTournamentStats?.yellowCards ?? "-"}</strong>
+                  <small>Gula</small>
+                </div>
+                <div>
+                  <strong>{liveTournamentStats?.redCards ?? "-"}</strong>
+                  <small>Röda</small>
+                </div>
+                <div>
+                  <strong>{liveTournamentStats?.totalGoals ?? "-"}</strong>
+                  <small>Mål</small>
+                </div>
+              </div>
+              {liveTournamentStats?.updatedAt && (
+                <small className="updated-at-text">
+                  Uppdaterad {formatDateOnly.format(new Date(liveTournamentStats.updatedAt))}
+                </small>
+              )}
+            </div>
+          )}
         </div>
       </section>
 

@@ -118,6 +118,36 @@ h3 {
 
 .deadline-panel strong {
   color: #12322e;
+  font-size: 1rem;
+}
+
+.live-stats-panel {
+  gap: 8px;
+}
+
+.live-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.live-stat-grid div {
+  display: grid;
+  gap: 1px;
+}
+
+.live-stat-grid strong {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.deadline-panel small {
+  color: #61736e;
+  font-size: 0.74rem;
+}
+
+.deadline-panel .updated-at-text {
+  font-size: 0.68rem;
 }
 
 .tabs {

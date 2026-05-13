@@ -34,6 +34,7 @@ Implementerade huvudfunktioner:
 - Formuläret innehåller även en utslagsfråga: matchminut för första målet i finalen, endast för att skilja tippare åt vid lika poäng.
 - Heroytan visar både deadline och aktuellt antal inskickade tips.
 - Före deadline visas inte `Samtliga tippningar` och `Statistik`. När tippningen stänger 2026-06-11 22:00 döljs `Skicka in` och de två vyerna visas.
+- Efter deadline döljs deadline-kortet i heron och ersätts av ett turneringskort med gula kort, röda kort och mål. Datum för senaste uppdatering hämtas från `tournament_results.updated_at` för statistikresultatet.
 - Viktad testdata kan skapas med `scripts/seed-weighted-test-data.mjs`. Scriptet gör endast inserts av nya testdeltagare/tips och använder unika e-postadresser per körning.
 - Read-only Supabase-audit kan köras med `scripts/audit-readonly.mjs`; testrapporten finns i `docs/test-report-2026-05-11.md`.
 - Skarpa inskick går via Postgres RPC:n `submit_prediction`, som validerar payloaden server-side och sparar deltagare + tips atomärt. Direkta anon-inserts till `participants` och `predictions` är indragna.
