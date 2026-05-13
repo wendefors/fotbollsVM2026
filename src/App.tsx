@@ -186,6 +186,91 @@ function formatPredictionScore(homeGoals: number | "", awayGoals: number | "") {
   return `${homeGoals}-${awayGoals}`;
 }
 
+function getMatchSign(homeGoals: number | "", awayGoals: number | "") {
+  if (homeGoals === "" || awayGoals === "") {
+    return "";
+  }
+
+  if (homeGoals > awayGoals) return "1";
+  if (homeGoals < awayGoals) return "2";
+  return "X";
+}
+
+function formatComparisonValue(value: string | number | "") {
+  if (value === "") {
+    return "Ej valt";
+  }
+
+  return String(value);
+}
+
+function countMatchingChoices(first: PublicPrediction, second: PublicPrediction) {
+  let same = 0;
+  let different = 0;
+
+  for (const match of initialSwedenMatches) {
+    const firstMatch = first.swedenMatches.find((item) => item.id === match.id);
+    const secondMatch = second.swedenMatches.find((item) => item.id === match.id);
+    const firstValue = formatPredictionScore(firstMatch?.homeGoals ?? "", firstMatch?.awayGoals ?? "");
+    const secondValue = formatPredictionScore(
+      secondMatch?.homeGoals ?? "",
+      secondMatch?.awayGoals ?? "",
+    );
+
+    if (firstValue === secondValue) {
+      same += 1;
+    } else {
+      different += 1;
+    }
+  }
+
+  for (const group of groups) {
+    const firstGroup = first.groups.find((item) => item.group === group);
+    const secondGroup = second.groups.find((item) => item.group === group);
+    const sameWinner = (firstGroup?.winner ?? "") === (secondGroup?.winner ?? "");
+    const sameRunnerUp = (firstGroup?.runnerUp ?? "") === (secondGroup?.runnerUp ?? "");
+
+    same += Number(sameWinner) + Number(sameRunnerUp);
+    different += Number(!sameWinner) + Number(!sameRunnerUp);
+  }
+
+  const podiumFields: Array<keyof PublicPrediction["podium"]> = [
+    "champion",
+    "runnerUp",
+    "thirdPlace",
+  ];
+
+  for (const field of podiumFields) {
+    if (first.podium[field] === second.podium[field]) {
+      same += 1;
+    } else {
+      different += 1;
+    }
+  }
+
+  const questionFields: Array<keyof PublicPrediction["tournamentQuestions"]> = [
+    "yellowCards",
+    "redCards",
+    "totalGoals",
+  ];
+
+  for (const field of questionFields) {
+    if (first.tournamentQuestions[field] === second.tournamentQuestions[field]) {
+      same += 1;
+    } else {
+      different += 1;
+    }
+  }
+
+  if (first.tieBreaker.finalFirstGoalMinute === second.tieBreaker.finalFirstGoalMinute) {
+    same += 1;
+  } else {
+    different += 1;
+  }
+
+  return { same, different };
+}
+
 function getRoundedPercentages(items: Array<{ count: number }>, total: number) {
   if (total === 0) {
     return items.map(() => 0);
@@ -1815,6 +1900,9 @@ function PredictionsView({
   focusedPredictionId: string | null;
   predictions: PublicPrediction[];
 }) {
+  const [selectedPredictionIds, setSelectedPredictionIds] = useState<string[]>([]);
+  const comparisonVisible = selectedPredictionIds.length === 2;
+
   useEffect(() => {
     if (!focusedPredictionId) {
       return;
@@ -1825,12 +1913,73 @@ function PredictionsView({
     element?.focus({ preventScroll: true });
   }, [focusedPredictionId]);
 
+  const selectedPredictions = selectedPredictionIds
+    .map((predictionId) => predictions.find((prediction) => prediction.id === predictionId))
+    .filter((prediction): prediction is PublicPrediction => Boolean(prediction));
+
+  useEffect(() => {
+    setSelectedPredictionIds((current) =>
+      current.filter((predictionId) =>
+        predictions.some((prediction) => prediction.id === predictionId),
+      ),
+    );
+  }, [predictions]);
+
+  useEffect(() => {
+    if (!comparisonVisible) {
+      return;
+    }
+
+    const element = document.getElementById("prediction-comparison");
+    element?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [comparisonVisible, selectedPredictionIds]);
+
+  function togglePredictionSelection(predictionId: string) {
+    setSelectedPredictionIds((current) => {
+      if (current.includes(predictionId)) {
+        return current.filter((item) => item !== predictionId);
+      }
+
+      if (current.length < 2) {
+        return [...current, predictionId];
+      }
+
+      return current;
+    });
+  }
+
+  function clearPredictionSelection() {
+    setSelectedPredictionIds([]);
+  }
+
   return (
     <section className="panel">
       <div className="section-heading">
         <h2>Allas inskickade tips</h2>
         <p>Kontaktuppgifter visas inte publikt.</p>
       </div>
+      <div className="compare-toolbar">
+        <p>
+          Välj två tippningar för att jämföra dem sida vid sida.
+        </p>
+        {selectedPredictions.length > 0 && (
+          <button className="secondary-button" type="button" onClick={clearPredictionSelection}>
+            <RotateCcw aria-hidden="true" />
+            Rensa val
+          </button>
+        )}
+      </div>
+      {selectedPredictions.length === 1 && (
+        <div className="notice">
+          {selectedPredictions[0].initials} är vald. Välj en till tippning för att se jämförelsen.
+        </div>
+      )}
+      {selectedPredictions.length === 2 && (
+        <PredictionComparisonView
+          firstPrediction={selectedPredictions[0]}
+          secondPrediction={selectedPredictions[1]}
+        />
+      )}
       <div className="prediction-list">
         {predictions.map((prediction) => (
           <article
@@ -1844,8 +1993,27 @@ function PredictionsView({
             tabIndex={-1}
           >
             <header>
-              <strong>{prediction.initials}</strong>
-              <span>{formatDateTime.format(new Date(prediction.submittedAt))}</span>
+              <div className="prediction-card-heading">
+                <strong>{prediction.initials}</strong>
+                <span>{formatDateTime.format(new Date(prediction.submittedAt))}</span>
+              </div>
+              <button
+                className={
+                  selectedPredictionIds.includes(prediction.id)
+                    ? "select-compare-button active"
+                    : "select-compare-button"
+                }
+                disabled={
+                  selectedPredictionIds.length === 2 &&
+                  !selectedPredictionIds.includes(prediction.id)
+                }
+                type="button"
+                onClick={() => togglePredictionSelection(prediction.id)}
+              >
+                {selectedPredictionIds.includes(prediction.id)
+                  ? "Vald för jämförelse"
+                  : "Jämför"}
+              </button>
             </header>
             <div className="prediction-columns">
               <div>
@@ -1884,6 +2052,184 @@ function PredictionsView({
             </div>
           </article>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function PredictionComparisonView({
+  firstPrediction,
+  secondPrediction,
+}: {
+  firstPrediction: PublicPrediction;
+  secondPrediction: PublicPrediction;
+}) {
+  const summary = countMatchingChoices(firstPrediction, secondPrediction);
+  const renderAnswer = (initials: string, value: string) => (
+    <strong>
+      <span className="comparison-mobile-label">{initials}</span>
+      {value}
+    </strong>
+  );
+  const podiumRows = [
+    {
+      label: "Världsmästare",
+      first: firstPrediction.podium.champion,
+      second: secondPrediction.podium.champion,
+    },
+    {
+      label: "Tvåa",
+      first: firstPrediction.podium.runnerUp,
+      second: secondPrediction.podium.runnerUp,
+    },
+    {
+      label: "Trea",
+      first: firstPrediction.podium.thirdPlace,
+      second: secondPrediction.podium.thirdPlace,
+    },
+  ];
+  const questionRows = [
+    {
+      label: "Gula kort",
+      first: formatComparisonValue(firstPrediction.tournamentQuestions.yellowCards),
+      second: formatComparisonValue(secondPrediction.tournamentQuestions.yellowCards),
+    },
+    {
+      label: "Röda kort",
+      first: formatComparisonValue(firstPrediction.tournamentQuestions.redCards),
+      second: formatComparisonValue(secondPrediction.tournamentQuestions.redCards),
+    },
+    {
+      label: "Totalt antal mål",
+      first: formatComparisonValue(firstPrediction.tournamentQuestions.totalGoals),
+      second: formatComparisonValue(secondPrediction.tournamentQuestions.totalGoals),
+    },
+    {
+      label: "Finalens första mål",
+      first: `Minut ${formatComparisonValue(firstPrediction.tieBreaker.finalFirstGoalMinute)}`,
+      second: `Minut ${formatComparisonValue(secondPrediction.tieBreaker.finalFirstGoalMinute)}`,
+    },
+  ];
+
+  return (
+    <section className="comparison-panel" id="prediction-comparison">
+      <div className="comparison-header">
+        <div>
+          <h3>Jämförelse</h3>
+          <p>
+            {firstPrediction.initials} mot {secondPrediction.initials}
+          </p>
+        </div>
+        <div className="comparison-summary">
+          <span>{summary.same} lika</span>
+          <span>{summary.different} olika</span>
+        </div>
+      </div>
+
+      <div className="comparison-section">
+        <h4>Sveriges matcher</h4>
+        <div className="comparison-grid comparison-grid-head">
+          <span />
+          <strong>{firstPrediction.initials}</strong>
+          <strong>{secondPrediction.initials}</strong>
+        </div>
+        {initialSwedenMatches.map((match) => {
+          const firstMatch = firstPrediction.swedenMatches.find((item) => item.id === match.id);
+          const secondMatch = secondPrediction.swedenMatches.find((item) => item.id === match.id);
+          const firstValue = formatComparisonValue(
+            formatPredictionScore(firstMatch?.homeGoals ?? "", firstMatch?.awayGoals ?? ""),
+          );
+          const secondValue = formatComparisonValue(
+            formatPredictionScore(secondMatch?.homeGoals ?? "", secondMatch?.awayGoals ?? ""),
+          );
+          const firstSign = getMatchSign(firstMatch?.homeGoals ?? "", firstMatch?.awayGoals ?? "");
+          const secondSign = getMatchSign(secondMatch?.homeGoals ?? "", secondMatch?.awayGoals ?? "");
+          const comparisonClass =
+            firstValue === secondValue
+              ? "comparison-grid same"
+              : firstSign !== "" && firstSign === secondSign
+                ? "comparison-grid partial"
+                : "comparison-grid different";
+
+          return (
+            <div className={comparisonClass} key={match.id}>
+              <span>{match.homeTeam} - {match.awayTeam}</span>
+              {renderAnswer(firstPrediction.initials, firstValue)}
+              {renderAnswer(secondPrediction.initials, secondValue)}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="comparison-section">
+        <h4>Gruppspel</h4>
+        <div className="comparison-grid comparison-grid-head">
+          <span />
+          <strong>{firstPrediction.initials}</strong>
+          <strong>{secondPrediction.initials}</strong>
+        </div>
+        {groups.map((group) => {
+          const firstGroup = firstPrediction.groups.find((item) => item.group === group);
+          const secondGroup = secondPrediction.groups.find((item) => item.group === group);
+          const firstValue = `${firstGroup?.winner ?? "Ej valt"} / ${firstGroup?.runnerUp ?? "Ej valt"}`;
+          const secondValue = `${secondGroup?.winner ?? "Ej valt"} / ${secondGroup?.runnerUp ?? "Ej valt"}`;
+          const sameTeams =
+            firstGroup?.winner === secondGroup?.runnerUp &&
+            firstGroup?.runnerUp === secondGroup?.winner;
+          const comparisonClass =
+            firstValue === secondValue
+              ? "comparison-grid same"
+              : sameTeams
+                ? "comparison-grid partial"
+                : "comparison-grid different";
+
+          return (
+            <div className={comparisonClass} key={group}>
+              <span>Grupp {group}</span>
+              {renderAnswer(firstPrediction.initials, firstValue)}
+              {renderAnswer(secondPrediction.initials, secondValue)}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="comparison-section comparison-two-column">
+        <div>
+          <h4>Topp 3</h4>
+          <div className="comparison-grid comparison-grid-head">
+            <span />
+            <strong>{firstPrediction.initials}</strong>
+            <strong>{secondPrediction.initials}</strong>
+          </div>
+          {podiumRows.map((row) => (
+            <div
+              className={row.first === row.second ? "comparison-grid same" : "comparison-grid different"}
+              key={row.label}
+            >
+              <span>{row.label}</span>
+              {renderAnswer(firstPrediction.initials, row.first)}
+              {renderAnswer(secondPrediction.initials, row.second)}
+            </div>
+          ))}
+        </div>
+        <div>
+          <h4>Turneringsfrågor</h4>
+          <div className="comparison-grid comparison-grid-head">
+            <span />
+            <strong>{firstPrediction.initials}</strong>
+            <strong>{secondPrediction.initials}</strong>
+          </div>
+          {questionRows.map((row) => (
+            <div
+              className={row.first === row.second ? "comparison-grid same" : "comparison-grid different"}
+              key={row.label}
+            >
+              <span>{row.label}</span>
+              {renderAnswer(firstPrediction.initials, row.first)}
+              {renderAnswer(secondPrediction.initials, row.second)}
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );
