@@ -37,7 +37,9 @@ Implementerade huvudfunktioner:
 - Efter deadline döljs deadline-kortet i heron och ersätts av ett turneringskort med gula kort, röda kort och mål. Datum för senaste uppdatering hämtas från `tournament_results.updated_at` för statistikresultatet.
 - Viktad testdata kan skapas med `scripts/seed-weighted-test-data.mjs`. Scriptet gör endast inserts av nya testdeltagare/tips och använder unika e-postadresser per körning.
 - Read-only Supabase-audit kan köras med `scripts/audit-readonly.mjs`; testrapporten finns i `docs/test-report-2026-05-11.md`.
+- Löpande backup av skarp tävlingsdata kan köras med `npm run backup:supabase`. Scriptet använder service-role-nyckel lokalt, gör endast read-only-export och sparar tidsstämplad JSON i git-ignorerade `backups/`. Rutinen beskrivs i `docs/backups.md`.
 - Skarpa inskick går via Postgres RPC:n `submit_prediction`, som validerar payloaden server-side och sparar deltagare + tips atomärt. Direkta anon-inserts till `participants` och `predictions` är indragna.
+- Data API-rättigheter är explicita inför Supabase-ändringen 2026: `anon` har bara select/execute mot publika läsytor och `submit_prediction`, medan `service_role` har explicita CRUD-grants på adminfunktionens tabeller.
 - Appen använder inte längre lokal sampledata som fallback när Supabase-hämtning misslyckas; publika tips har loading/error-state.
 - Tippningssidans blockordning är: kontakt, poängregler, Sveriges matcher, gruppspel, topp 3, turneringsfrågor och utslagsfråga.
 - Regelblocket heter `Regler och poäng`. Ingressen innehåller deltagaravgift: 50 kr via Swish till Gustav, 070-309 26 43, samt att vinnaren tar allt. Brickorna i blocket visar endast poängreglerna.
