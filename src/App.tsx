@@ -40,6 +40,12 @@ type LiveTournamentStats = {
   totalGoals: number | "";
   updatedAt: string | null;
 };
+type PersistedAppState = {
+  version: 1;
+  view: View;
+  form: PredictionForm;
+  receipt: PublicPrediction | null;
+};
 
 type AdminResults = {
   swedenMatches: Array<{
@@ -535,6 +541,133 @@ const initialForm: PredictionForm = {
   },
 };
 
+const appStateStorageKey = "fotbollsvm2026.appState.v1";
+
+function cloneInitialForm(): PredictionForm {
+  return {
+    contact: {
+      ...initialForm.contact,
+    },
+    swedenMatches: initialForm.swedenMatches.map((match) => ({ ...match })),
+    groups: initialForm.groups.map((group) => ({ ...group })),
+    podium: {
+      ...initialForm.podium,
+    },
+    tournamentQuestions: {
+      ...initialForm.tournamentQuestions,
+    },
+    tieBreaker: {
+      ...initialForm.tieBreaker,
+    },
+  };
+}
+
+function normalizeNumericValue(value: unknown): number | "" {
+  return typeof value === "number" && Number.isFinite(value) ? value : "";
+}
+
+function normalizePersistedForm(value: unknown): PredictionForm {
+  const fallback = cloneInitialForm();
+
+  if (!value || typeof value !== "object") {
+    return fallback;
+  }
+
+  const form = value as Partial<PredictionForm>;
+  const contact = form.contact ?? fallback.contact;
+  const swedenMatches = Array.isArray(form.swedenMatches) ? form.swedenMatches : [];
+  const persistedGroups = Array.isArray(form.groups) ? form.groups : [];
+
+  return {
+    contact: {
+      firstName: typeof contact.firstName === "string" ? contact.firstName : "",
+      lastName: typeof contact.lastName === "string" ? contact.lastName : "",
+      phone: typeof contact.phone === "string" ? contact.phone : "",
+      email: typeof contact.email === "string" ? contact.email : "",
+    },
+    swedenMatches: fallback.swedenMatches.map((match) => {
+      const persistedMatch = swedenMatches.find((item) => item?.id === match.id);
+
+      return {
+        ...match,
+        homeGoals: normalizeNumericValue(persistedMatch?.homeGoals),
+        awayGoals: normalizeNumericValue(persistedMatch?.awayGoals),
+      };
+    }),
+    groups: fallback.groups.map((group) => {
+      const persistedGroup = persistedGroups.find((item) => item?.group === group.group);
+
+      return {
+        ...group,
+        winner: typeof persistedGroup?.winner === "string" ? persistedGroup.winner : "",
+        runnerUp: typeof persistedGroup?.runnerUp === "string" ? persistedGroup.runnerUp : "",
+      };
+    }),
+    podium: {
+      champion: typeof form.podium?.champion === "string" ? form.podium.champion : "",
+      runnerUp: typeof form.podium?.runnerUp === "string" ? form.podium.runnerUp : "",
+      thirdPlace: typeof form.podium?.thirdPlace === "string" ? form.podium.thirdPlace : "",
+    },
+    tournamentQuestions: {
+      yellowCards: normalizeNumericValue(form.tournamentQuestions?.yellowCards),
+      redCards: normalizeNumericValue(form.tournamentQuestions?.redCards),
+      totalGoals: normalizeNumericValue(form.tournamentQuestions?.totalGoals),
+    },
+    tieBreaker: {
+      finalFirstGoalMinute: normalizeNumericValue(form.tieBreaker?.finalFirstGoalMinute),
+    },
+  };
+}
+
+function loadPersistedAppState(): PersistedAppState | null {
+  try {
+    const rawState = window.localStorage.getItem(appStateStorageKey);
+
+    if (!rawState) {
+      return null;
+    }
+
+    const parsed = JSON.parse(rawState) as Partial<PersistedAppState>;
+
+    if (parsed.version !== 1) {
+      return null;
+    }
+
+    const view: View =
+      parsed.view === "receipt" ||
+      parsed.view === "predictions" ||
+      parsed.view === "standings" ||
+      parsed.view === "statistics"
+        ? parsed.view
+        : "submit";
+
+    return {
+      version: 1,
+      view,
+      form: normalizePersistedForm(parsed.form),
+      receipt: parsed.receipt ?? null,
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function savePersistedAppState(state: PersistedAppState) {
+  try {
+    window.localStorage.setItem(appStateStorageKey, JSON.stringify(state));
+  } catch (error) {
+    // localStorage can fail in private browsing or when storage is full.
+  }
+}
+
+function clearPersistedAppState() {
+  try {
+    window.localStorage.removeItem(appStateStorageKey);
+  } catch (error) {
+    // Ignore localStorage failures; persistence is only a convenience.
+  }
+}
+
 const formatDateTime = new Intl.DateTimeFormat("sv-SE", {
   dateStyle: "medium",
   timeStyle: "short",
@@ -609,8 +742,9 @@ function App() {
   const searchParams = new URLSearchParams(window.location.search);
   const isAdminRoute = searchParams.has("admin");
   const isClosedPreview = import.meta.env.DEV && searchParams.get("preview") === "closed";
-  const [view, setView] = useState<View>("submit");
-  const [form, setForm] = useState<PredictionForm>(initialForm);
+  const persistedState = useMemo(() => (isAdminRoute ? null : loadPersistedAppState()), [isAdminRoute]);
+  const [view, setView] = useState<View>(() => persistedState?.view ?? "submit");
+  const [form, setForm] = useState<PredictionForm>(() => persistedState?.form ?? cloneInitialForm());
   const [predictions, setPredictions] = useState<PublicPrediction[]>([]);
   const [predictionLoadState, setPredictionLoadState] = useState<PredictionLoadState>(
     isSupabaseConfigured ? "loading" : "loaded",
@@ -619,7 +753,7 @@ function App() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [receipt, setReceipt] = useState<PublicPrediction | null>(null);
+  const [receipt, setReceipt] = useState<PublicPrediction | null>(() => persistedState?.receipt ?? null);
   const [focusedPredictionId, setFocusedPredictionId] = useState<string | null>(null);
   const [liveTournamentStats, setLiveTournamentStats] = useState<LiveTournamentStats | null>(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
@@ -713,6 +847,19 @@ function App() {
 
     return () => window.clearInterval(timerId);
   }, []);
+
+  useEffect(() => {
+    if (isAdminRoute) {
+      return;
+    }
+
+    savePersistedAppState({
+      version: 1,
+      view,
+      form,
+      receipt,
+    });
+  }, [form, isAdminRoute, receipt, view]);
 
   useEffect(() => {
     if (isSubmissionOpen && (view === "predictions" || view === "statistics")) {
@@ -902,7 +1049,8 @@ function App() {
       }
 
       setIsSubmitted(true);
-      setForm(initialForm);
+      setForm(cloneInitialForm());
+      clearPersistedAppState();
       setView("receipt");
     } catch (error) {
       console.error("Submit failed", error);
