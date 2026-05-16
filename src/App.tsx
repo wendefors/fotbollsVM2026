@@ -2131,7 +2131,7 @@ function PredictionsView({
           type="search"
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="Till exempel GW"
+          placeholder="Skriv initialer för att filtrera listan"
         />
       </label>
       {selectedPredictions.length === 1 && (
