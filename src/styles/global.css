@@ -779,6 +779,13 @@ input[type="number"] {
   color: #ffffff;
 }
 
+.prediction-search {
+  display: grid;
+  gap: 8px;
+  max-width: 320px;
+  margin-bottom: 16px;
+}
+
 .prediction-card {
   border: 1px solid #e1e7dd;
   border-radius: 8px;

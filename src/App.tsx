@@ -2049,7 +2049,14 @@ function PredictionsView({
   predictions: PublicPrediction[];
 }) {
   const [selectedPredictionIds, setSelectedPredictionIds] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const comparisonVisible = selectedPredictionIds.length === 2;
+  const normalizedSearchQuery = searchQuery.trim().toUpperCase();
+  const visiblePredictions = normalizedSearchQuery
+    ? predictions.filter((prediction) =>
+        prediction.initials.toUpperCase().includes(normalizedSearchQuery),
+      )
+    : predictions;
 
   useEffect(() => {
     if (!focusedPredictionId) {
@@ -2117,6 +2124,16 @@ function PredictionsView({
           </button>
         )}
       </div>
+      <label className="prediction-search">
+        Sök initialer
+        <input
+          autoComplete="off"
+          type="search"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="Till exempel GW"
+        />
+      </label>
       {selectedPredictions.length === 1 && (
         <div className="notice">
           {selectedPredictions[0].initials} är vald. Välj en till tippning för att se jämförelsen.
@@ -2129,7 +2146,12 @@ function PredictionsView({
         />
       )}
       <div className="prediction-list">
-        {predictions.map((prediction) => (
+        {visiblePredictions.length === 0 && (
+          <div className="notice">
+            Inga tippningar matchar sökningen.
+          </div>
+        )}
+        {visiblePredictions.map((prediction) => (
           <article
             className={
               prediction.id === focusedPredictionId
