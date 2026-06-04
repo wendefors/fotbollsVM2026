@@ -37,6 +37,8 @@ type AdminResults = {
   tieBreaker: TieBreakerResult;
 };
 
+type AdminAction = "load" | "save" | "load_messages" | "set_message_visibility";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -325,6 +327,43 @@ async function loadResults(supabase: ReturnType<typeof createClient>) {
   return data ?? [];
 }
 
+async function loadMessageBoardPosts(supabase: ReturnType<typeof createClient>) {
+  const { data, error } = await supabase
+    .from("message_board_posts")
+    .select("id,display_name,message,created_at,is_hidden")
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
+async function setMessageBoardPostVisibility(
+  supabase: ReturnType<typeof createClient>,
+  messageId: unknown,
+  isHidden: unknown,
+) {
+  if (typeof messageId !== "string" || !messageId) {
+    throw new Error("Message id is required");
+  }
+
+  if (typeof isHidden !== "boolean") {
+    throw new Error("Message visibility is required");
+  }
+
+  const { error } = await supabase
+    .from("message_board_posts")
+    .update({ is_hidden: isHidden })
+    .eq("id", messageId);
+
+  if (error) {
+    throw error;
+  }
+}
+
 async function recalculateScores(supabase: ReturnType<typeof createClient>, results: AdminResults) {
   const { data: predictions, error } = await supabase
     .from("predictions")
@@ -389,15 +428,28 @@ Deno.serve(async (request) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
   try {
-    if (body.action === "load") {
+    const action = body.action as AdminAction;
+
+    if (action === "load") {
       const results = await loadResults(supabase);
       return jsonResponse({ results });
     }
 
-    if (body.action === "save") {
+    if (action === "save") {
       await saveResults(supabase, body.results);
       await recalculateScores(supabase, body.results);
       return jsonResponse({ ok: true });
+    }
+
+    if (action === "load_messages") {
+      const messages = await loadMessageBoardPosts(supabase);
+      return jsonResponse({ messages });
+    }
+
+    if (action === "set_message_visibility") {
+      await setMessageBoardPostVisibility(supabase, body.messageId, body.isHidden);
+      const messages = await loadMessageBoardPosts(supabase);
+      return jsonResponse({ messages });
     }
 
     return jsonResponse({ error: "Unknown action" }, 400);

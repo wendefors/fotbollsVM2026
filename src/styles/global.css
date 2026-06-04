@@ -21,7 +21,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -152,7 +153,7 @@ h3 {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
   margin: 8px 0 18px;
 }
@@ -228,6 +229,38 @@ h3 {
 .admin-login {
   display: grid;
   gap: 16px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.admin-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  border: 1px solid #d7ded2;
+  border-radius: 8px;
+  padding: 0 14px;
+  background: #ffffff;
+  color: #28453f;
+  font-weight: 700;
+}
+
+.admin-tabs button.active {
+  border-color: #143c35;
+  background: #143c35;
+  color: #ffffff;
+}
+
+.admin-tabs svg {
+  width: 18px;
+  height: 18px;
 }
 
 .receipt-panel {
@@ -455,7 +488,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 44px;
   border: 1px solid #cbd5cf;
@@ -467,9 +501,17 @@ select {
 
 input:focus,
 select:focus,
+textarea:focus,
 button:focus-visible {
   outline: 3px solid rgb(201 93 63 / 28%);
   outline-offset: 2px;
+}
+
+textarea {
+  min-height: 120px;
+  padding-top: 12px;
+  line-height: 1.45;
+  resize: vertical;
 }
 
 .match-list,
@@ -786,6 +828,157 @@ input[type="number"] {
   margin-bottom: 16px;
 }
 
+.message-board {
+  display: grid;
+  gap: 18px;
+}
+
+.message-composer {
+  display: grid;
+  gap: 16px;
+}
+
+.message-form-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.message-submit-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.message-counter {
+  color: #61736e;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.message-counter.warning {
+  color: #a13d27;
+}
+
+.message-feed {
+  display: grid;
+  gap: 12px;
+}
+
+.message-list {
+  display: grid;
+  gap: 12px;
+}
+
+.message-feed-actions {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.message-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid #e1e7dd;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcf9;
+}
+
+.message-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: #edf5ec;
+  color: #143c35;
+  font-weight: 800;
+}
+
+.message-card header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.message-card header strong {
+  color: #143c35;
+}
+
+.message-card header span {
+  color: #61736e;
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.message-card p {
+  margin-bottom: 0;
+  color: #435a55;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.admin-message-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-message-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-message-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  border: 1px solid #e1e7dd;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcf9;
+}
+
+.admin-message-card.hidden {
+  background: #f1f3ef;
+  opacity: 0.72;
+}
+
+.admin-message-card header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.admin-message-card header strong {
+  color: #143c35;
+}
+
+.admin-message-card header span,
+.admin-message-card small {
+  color: #61736e;
+  font-size: 0.84rem;
+}
+
+.admin-message-card p {
+  margin-bottom: 6px;
+  color: #435a55;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .prediction-card {
   border: 1px solid #e1e7dd;
   border-radius: 8px;
@@ -1090,6 +1283,7 @@ input[type="number"] {
   .content-grid,
   .form-grid,
   .form-grid.three,
+  .message-form-grid,
   .prediction-columns,
   .receipt-hero,
   .receipt-grid,
@@ -1169,6 +1363,7 @@ input[type="number"] {
   }
 
   .tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
   }
 
@@ -1177,6 +1372,23 @@ input[type="number"] {
     min-width: 0;
     padding: 0 4px;
     font-size: 0.75rem;
+  }
+
+  .message-submit-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-message-card,
+  .message-card {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-message-card header,
+  .message-card header {
+    align-items: start;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .tabs .desktop-label {

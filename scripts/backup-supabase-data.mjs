@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
 
 function loadLocalEnv() {
   try {
@@ -34,6 +35,9 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
     persistSession: false,
     autoRefreshToken: false,
   },
+  realtime: {
+    transport: WebSocket,
+  },
 });
 
 const tables = [
@@ -41,6 +45,7 @@ const tables = [
   "predictions",
   "prediction_scores",
   "tournament_results",
+  "message_board_posts",
   "public_predictions",
 ];
 

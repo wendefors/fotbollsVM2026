@@ -6,6 +6,7 @@ import {
   Eye,
   BarChart3,
   Medal,
+  MessageSquare,
   RotateCcw,
   Send,
   ShieldCheck,
@@ -26,7 +27,7 @@ import { createId } from "./lib/id";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type { GroupPrediction, PredictionForm, PublicPrediction } from "./lib/types";
 
-type View = "submit" | "receipt" | "predictions" | "standings" | "statistics";
+type View = "submit" | "receipt" | "predictions" | "standings" | "statistics" | "messages";
 type PredictionFilter =
   | "all"
   | "sweden"
@@ -34,6 +35,17 @@ type PredictionFilter =
   | "podium"
   | "questions";
 type PredictionLoadState = "idle" | "loading" | "loaded" | "error";
+type MessageBoardLoadState = "idle" | "loading" | "loaded" | "error";
+type MessageBoardPost = {
+  id: string;
+  displayName: string;
+  message: string;
+  createdAt: string;
+};
+type MessageBoardForm = {
+  displayName: string;
+  message: string;
+};
 type LiveTournamentStats = {
   yellowCards: number | "";
   redCards: number | "";
@@ -76,6 +88,10 @@ type AdminResults = {
     finalFirstGoalMinute: number | "";
   };
 };
+type AdminViewTab = "results" | "messages";
+type AdminMessageBoardPost = MessageBoardPost & {
+  isHidden: boolean;
+};
 
 const predictionFilters: Array<{ id: PredictionFilter; label: string }> = [
   { id: "all", label: "Totalt" },
@@ -84,6 +100,7 @@ const predictionFilters: Array<{ id: PredictionFilter; label: string }> = [
   { id: "podium", label: "Topp 3" },
   { id: "questions", label: "Statistik" },
 ];
+const messageBoardPageSize = 25;
 
 const formatDateOnly = new Intl.DateTimeFormat("sv-SE", {
   day: "numeric",
@@ -637,7 +654,8 @@ function loadPersistedAppState(): PersistedAppState | null {
       parsed.view === "receipt" ||
       parsed.view === "predictions" ||
       parsed.view === "standings" ||
-      parsed.view === "statistics"
+      parsed.view === "statistics" ||
+      parsed.view === "messages"
         ? parsed.view
         : "submit";
 
@@ -716,6 +734,34 @@ function mapPublicPrediction(prediction: Record<string, any>): PublicPrediction 
   };
 }
 
+function mapMessageBoardPost(post: Record<string, any>): MessageBoardPost {
+  return {
+    id: post.id,
+    displayName: post.display_name?.trim() || "Anonym",
+    message: post.message,
+    createdAt: post.created_at,
+  };
+}
+
+function validateMessageBoardPost(form: MessageBoardForm) {
+  const displayName = form.displayName.trim();
+  const message = form.message.trim();
+
+  if (displayName.length > 40) {
+    return "Namnet får vara max 40 tecken.";
+  }
+
+  if (!message) {
+    return "Skriv ett meddelande.";
+  }
+
+  if (message.length > 300) {
+    return "Meddelandet får vara max 300 tecken.";
+  }
+
+  return null;
+}
+
 async function waitForPublicPrediction(predictionId: string) {
   if (!supabase) {
     return null;
@@ -756,6 +802,19 @@ function App() {
   const [receipt, setReceipt] = useState<PublicPrediction | null>(() => persistedState?.receipt ?? null);
   const [focusedPredictionId, setFocusedPredictionId] = useState<string | null>(null);
   const [liveTournamentStats, setLiveTournamentStats] = useState<LiveTournamentStats | null>(null);
+  const [messageBoardPosts, setMessageBoardPosts] = useState<MessageBoardPost[]>([]);
+  const [messageBoardForm, setMessageBoardForm] = useState<MessageBoardForm>({
+    displayName: "",
+    message: "",
+  });
+  const [messageBoardLoadState, setMessageBoardLoadState] = useState<MessageBoardLoadState>(
+    isSupabaseConfigured ? "loading" : "loaded",
+  );
+  const [messageBoardLoadError, setMessageBoardLoadError] = useState("");
+  const [messageBoardError, setMessageBoardError] = useState("");
+  const [isPostingMessage, setIsPostingMessage] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const isSubmissionOpen =
     !isClosedPreview && currentTime <= submissionDeadline.getTime();
@@ -841,6 +900,39 @@ function App() {
   }, []);
 
   useEffect(() => {
+    async function loadMessageBoardPosts() {
+      if (!supabase) {
+        setMessageBoardLoadState("loaded");
+        return;
+      }
+
+      setMessageBoardLoadState("loading");
+      setMessageBoardLoadError("");
+
+      const { data, error } = await supabase
+        .from("message_board_posts")
+        .select("id,display_name,message,created_at")
+        .order("created_at", { ascending: false })
+        .limit(messageBoardPageSize + 1);
+
+      if (error || !data) {
+        setMessageBoardPosts([]);
+        setMessageBoardLoadState("error");
+        setMessageBoardLoadError("Kunde inte hämta meddelanden just nu.");
+        return;
+      }
+
+      setHasOlderMessages(data.length > messageBoardPageSize);
+      setMessageBoardPosts(
+        data.slice(0, messageBoardPageSize).map(mapMessageBoardPost),
+      );
+      setMessageBoardLoadState("loaded");
+    }
+
+    void loadMessageBoardPosts();
+  }, []);
+
+  useEffect(() => {
     const timerId = window.setInterval(() => {
       setCurrentTime(Date.now());
     }, 30_000);
@@ -862,7 +954,10 @@ function App() {
   }, [form, isAdminRoute, receipt, view]);
 
   useEffect(() => {
-    if (isSubmissionOpen && (view === "predictions" || view === "statistics")) {
+    if (
+      isSubmissionOpen &&
+      (view === "predictions" || view === "statistics" || view === "messages")
+    ) {
       setView("standings");
       return;
     }
@@ -1072,6 +1167,109 @@ function App() {
     setView("predictions");
   }
 
+  async function handleMessageBoardSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessageBoardError("");
+
+    const validationError = validateMessageBoardPost(messageBoardForm);
+
+    if (validationError) {
+      setMessageBoardError(validationError);
+      return;
+    }
+
+    if (isPostingMessage) {
+      return;
+    }
+
+    const displayName = messageBoardForm.displayName.trim() || "Anonym";
+    const message = messageBoardForm.message.trim();
+    setIsPostingMessage(true);
+
+    try {
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("message_board_posts")
+          .insert({
+            display_name: displayName,
+            message,
+          })
+          .select("id,display_name,message,created_at")
+          .single();
+
+        if (error || !data) {
+          setMessageBoardError("Kunde inte skicka meddelandet. Försök igen.");
+          return;
+        }
+
+        setMessageBoardPosts((current) => [
+          mapMessageBoardPost(data),
+          ...current,
+        ]);
+      } else {
+        const post: MessageBoardPost = {
+          id: createId(),
+          displayName,
+          message,
+          createdAt: new Date().toISOString(),
+        };
+
+        setMessageBoardPosts((current) => [post, ...current]);
+      }
+
+      setMessageBoardForm((current) => ({
+        ...current,
+        message: "",
+      }));
+      setMessageBoardLoadState("loaded");
+    } catch (error) {
+      console.error("Message post failed", error);
+      setMessageBoardError("Något gick fel när meddelandet skulle skickas.");
+    } finally {
+      setIsPostingMessage(false);
+    }
+  }
+
+  async function loadOlderMessageBoardPosts() {
+    if (!supabase || isLoadingOlderMessages || !hasOlderMessages) {
+      return;
+    }
+
+    const oldestPost = messageBoardPosts[messageBoardPosts.length - 1];
+
+    if (!oldestPost) {
+      return;
+    }
+
+    setMessageBoardLoadError("");
+    setIsLoadingOlderMessages(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("message_board_posts")
+        .select("id,display_name,message,created_at")
+        .lt("created_at", oldestPost.createdAt)
+        .order("created_at", { ascending: false })
+        .limit(messageBoardPageSize + 1);
+
+      if (error || !data) {
+        setMessageBoardLoadError("Kunde inte hämta äldre meddelanden just nu.");
+        return;
+      }
+
+      setHasOlderMessages(data.length > messageBoardPageSize);
+      setMessageBoardPosts((current) => [
+        ...current,
+        ...data.slice(0, messageBoardPageSize).map(mapMessageBoardPost),
+      ]);
+    } catch (error) {
+      console.error("Older messages load failed", error);
+      setMessageBoardLoadError("Kunde inte hämta äldre meddelanden just nu.");
+    } finally {
+      setIsLoadingOlderMessages(false);
+    }
+  }
+
   if (isAdminRoute) {
     return (
       <main className="app-shell">
@@ -1171,6 +1369,16 @@ function App() {
         </button>
         {!isSubmissionOpen && (
           <button
+            className={view === "messages" ? "active" : ""}
+            type="button"
+            onClick={() => setView("messages")}
+          >
+            <MessageSquare aria-hidden="true" />
+            <span>Snack</span>
+          </button>
+        )}
+        {!isSubmissionOpen && (
+          <button
             className={view === "statistics" ? "active" : ""}
             type="button"
             onClick={() => setView("statistics")}
@@ -1232,10 +1440,162 @@ function App() {
         <StandingsView onSelectPrediction={focusPrediction} standings={standings} />
       )}
 
+      {view === "messages" && !isSubmissionOpen && (
+        <MessageBoardView
+          error={messageBoardError}
+          form={messageBoardForm}
+          hasOlderMessages={hasOlderMessages}
+          isLoadingOlderMessages={isLoadingOlderMessages}
+          isPosting={isPostingMessage}
+          loadError={messageBoardLoadError}
+          loadState={messageBoardLoadState}
+          posts={messageBoardPosts}
+          onChange={setMessageBoardForm}
+          onLoadOlder={loadOlderMessageBoardPosts}
+          onSubmit={handleMessageBoardSubmit}
+        />
+      )}
+
       {view === "statistics" && !isSubmissionOpen && (
         <StatisticsView predictions={predictions} />
       )}
     </main>
+  );
+}
+
+function MessageBoardView({
+  error,
+  form,
+  hasOlderMessages,
+  isLoadingOlderMessages,
+  isPosting,
+  loadError,
+  loadState,
+  posts,
+  onChange,
+  onLoadOlder,
+  onSubmit,
+}: {
+  error: string;
+  form: MessageBoardForm;
+  hasOlderMessages: boolean;
+  isLoadingOlderMessages: boolean;
+  isPosting: boolean;
+  loadError: string;
+  loadState: MessageBoardLoadState;
+  posts: MessageBoardPost[];
+  onChange: (nextForm: MessageBoardForm) => void;
+  onLoadOlder: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const remainingCharacters = 300 - form.message.length;
+
+  return (
+    <section className="message-board">
+      <form className="panel message-composer" onSubmit={onSubmit}>
+        <div className="section-heading with-icon">
+          <MessageSquare aria-hidden="true" />
+          <div>
+            <h2>VM-snack</h2>
+            <p>Skriv något om matcherna, tippningen eller turneringen.</p>
+          </div>
+        </div>
+
+        <div className="message-form-grid">
+          <label>
+            Namn eller initialer, frivilligt
+            <input
+              autoComplete="name"
+              maxLength={40}
+              value={form.displayName}
+              onChange={(event) =>
+                onChange({ ...form, displayName: event.target.value })
+              }
+              placeholder="Lämna tomt för Anonym"
+            />
+          </label>
+          <label>
+            Meddelande
+            <textarea
+              maxLength={300}
+              required
+              rows={4}
+              value={form.message}
+              onChange={(event) =>
+                onChange({ ...form, message: event.target.value })
+              }
+              placeholder="Skriv ditt meddelande"
+            />
+          </label>
+        </div>
+
+        <div className="message-submit-row">
+          <span className={remainingCharacters < 20 ? "message-counter warning" : "message-counter"}>
+            {remainingCharacters} tecken kvar
+          </span>
+          {error && <span className="error">{error}</span>}
+          <button className="primary-button" disabled={isPosting} type="submit">
+            <Send aria-hidden="true" />
+            {isPosting ? "Skickar" : "Skicka"}
+          </button>
+        </div>
+      </form>
+
+      <section className="panel message-feed" aria-live="polite">
+        <div className="section-heading">
+          <h2>Senaste meddelanden</h2>
+          <p>{posts.length === 0 ? "Inga meddelanden än." : `${posts.length} meddelanden visas.`}</p>
+        </div>
+
+        {loadState === "loading" && (
+          <div className="notice">
+            Hämtar meddelanden...
+          </div>
+        )}
+
+        {loadState === "error" && (
+          <div className="notice warning">
+            {loadError || "Kunde inte hämta meddelanden just nu."}
+          </div>
+        )}
+
+        {loadState !== "error" && loadError && (
+          <div className="notice warning">
+            {loadError}
+          </div>
+        )}
+
+        <div className="message-list">
+          {posts.map((post) => (
+            <article className="message-card" key={post.id}>
+              <div className="message-avatar" aria-hidden="true">
+                {(post.displayName.trim() || "Anonym").slice(0, 2).toUpperCase()}
+              </div>
+              <div>
+                <header>
+                  <strong>{post.displayName.trim() || "Anonym"}</strong>
+                  <span>{formatDateTime.format(new Date(post.createdAt))}</span>
+                </header>
+                <p>{post.message}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+
+        {hasOlderMessages && (
+          <div className="message-feed-actions">
+            <button
+              className="secondary-button"
+              disabled={isLoadingOlderMessages}
+              type="button"
+              onClick={onLoadOlder}
+            >
+              {isLoadingOlderMessages ? "Hämtar" : "Visa äldre"}
+            </button>
+          </div>
+        )}
+      </section>
+    </section>
   );
 }
 
@@ -1369,15 +1729,29 @@ function mergeAdminResults(rows: Array<Record<string, any>>) {
   return nextResults;
 }
 
+function mapAdminMessageBoardPost(post: Record<string, any>): AdminMessageBoardPost {
+  return {
+    ...mapMessageBoardPost(post),
+    isHidden: Boolean(post.is_hidden),
+  };
+}
+
 function AdminView() {
   const [code, setCode] = useState("");
   const [isUnlocked, setIsUnlocked] = useState(false);
+  const [adminTab, setAdminTab] = useState<AdminViewTab>("results");
   const [results, setResults] = useState<AdminResults>(initialAdminResults);
+  const [adminMessages, setAdminMessages] = useState<AdminMessageBoardPost[]>([]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [updatingMessageId, setUpdatingMessageId] = useState<string | null>(null);
 
-  async function callAdminFunction(action: "load" | "save", nextResults = results) {
+  async function callAdminFunction(
+    action: "load" | "save" | "load_messages" | "set_message_visibility",
+    payload: Record<string, unknown> = {},
+  ) {
     if (!supabase) {
       throw new Error("Supabase är inte konfigurerat.");
     }
@@ -1386,7 +1760,7 @@ function AdminView() {
       body: {
         action,
         code,
-        results: nextResults,
+        ...payload,
       },
     });
 
@@ -1419,7 +1793,7 @@ function AdminView() {
     setIsSaving(true);
 
     try {
-      await callAdminFunction("save");
+      await callAdminFunction("save", { results });
       setStatus("Resultaten är sparade och poängen har räknats om.");
     } catch {
       setError("Kunde inte spara resultaten.");
@@ -1484,6 +1858,48 @@ function AdminView() {
     }));
   }
 
+  async function loadAdminMessages() {
+    setError("");
+    setStatus("");
+    setIsLoadingMessages(true);
+
+    try {
+      const data = await callAdminFunction("load_messages");
+      setAdminMessages((data.messages ?? []).map(mapAdminMessageBoardPost));
+    } catch {
+      setError("Kunde inte hämta meddelanden.");
+    } finally {
+      setIsLoadingMessages(false);
+    }
+  }
+
+  async function openAdminMessages() {
+    setAdminTab("messages");
+
+    if (adminMessages.length === 0) {
+      await loadAdminMessages();
+    }
+  }
+
+  async function setAdminMessageVisibility(messageId: string, isHidden: boolean) {
+    setError("");
+    setStatus("");
+    setUpdatingMessageId(messageId);
+
+    try {
+      const data = await callAdminFunction("set_message_visibility", {
+        isHidden,
+        messageId,
+      });
+      setAdminMessages((data.messages ?? []).map(mapAdminMessageBoardPost));
+      setStatus(isHidden ? "Meddelandet är dolt från flödet." : "Meddelandet visas igen.");
+    } catch {
+      setError(isHidden ? "Kunde inte dölja meddelandet." : "Kunde inte visa meddelandet igen.");
+    } finally {
+      setUpdatingMessageId(null);
+    }
+  }
+
   if (!isUnlocked) {
     return (
       <section className="panel admin-panel">
@@ -1512,16 +1928,36 @@ function AdminView() {
   }
 
   return (
-    <form className="content-grid" onSubmit={saveAdminResults}>
+    <div className="content-grid">
       <section className="panel span-2">
         <div className="section-heading">
           <h1>Admin</h1>
-          <p>Lägg in faktiska resultat. När du sparar räknas poängen om.</p>
+          <p>Lägg in resultat och hantera meddelanden.</p>
+        </div>
+        <div className="admin-tabs" aria-label="Adminvyer">
+          <button
+            className={adminTab === "results" ? "active" : ""}
+            type="button"
+            onClick={() => setAdminTab("results")}
+          >
+            <Trophy aria-hidden="true" />
+            Resultat
+          </button>
+          <button
+            className={adminTab === "messages" ? "active" : ""}
+            type="button"
+            onClick={openAdminMessages}
+          >
+            <MessageSquare aria-hidden="true" />
+            Meddelanden
+          </button>
         </div>
         {status && <span className="success">{status}</span>}
         {error && <span className="error">{error}</span>}
       </section>
 
+      {adminTab === "results" && (
+        <form className="content-grid span-2" onSubmit={saveAdminResults}>
       <section className="panel span-2">
         <div className="section-heading">
           <h2>Sveriges matcher</h2>
@@ -1697,7 +2133,68 @@ function AdminView() {
           {isSaving ? "Sparar" : "Spara resultat och räkna om"}
         </button>
       </div>
-    </form>
+        </form>
+      )}
+
+      {adminTab === "messages" && (
+        <section className="panel span-2 admin-message-panel">
+          <div className="section-heading">
+            <h2>Meddelanden</h2>
+            <p>Dolda meddelanden visas inte i publika flödet.</p>
+          </div>
+          <div className="submit-bar">
+            <button
+              className="secondary-button"
+              disabled={isLoadingMessages}
+              type="button"
+              onClick={loadAdminMessages}
+            >
+              <RotateCcw aria-hidden="true" />
+              {isLoadingMessages ? "Hämtar" : "Uppdatera"}
+            </button>
+          </div>
+          {isLoadingMessages && (
+            <div className="notice">
+              Hämtar meddelanden...
+            </div>
+          )}
+          <div className="admin-message-list">
+            {adminMessages.length === 0 && !isLoadingMessages && (
+              <div className="notice">
+                Det finns inga meddelanden än.
+              </div>
+            )}
+            {adminMessages.map((message) => (
+              <article
+                className={message.isHidden ? "admin-message-card hidden" : "admin-message-card"}
+                key={message.id}
+              >
+                <div>
+                  <header>
+                    <strong>{message.displayName}</strong>
+                    <span>{formatDateTime.format(new Date(message.createdAt))}</span>
+                  </header>
+                  <p>{message.message}</p>
+                  {message.isHidden && <small>Dolt från publika flödet</small>}
+                </div>
+                <button
+                  className="secondary-button"
+                  disabled={updatingMessageId === message.id}
+                  type="button"
+                  onClick={() => setAdminMessageVisibility(message.id, !message.isHidden)}
+                >
+                  {updatingMessageId === message.id
+                    ? "Sparar"
+                    : message.isHidden
+                      ? "Visa igen"
+                      : "Dölj"}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
