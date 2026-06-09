@@ -1,6 +1,6 @@
 import type { GroupId, MatchPrediction, ScoreRule } from "../lib/types";
 
-export const submissionDeadline = new Date("2026-06-11T22:00:00+02:00");
+export const submissionDeadline = new Date("2026-06-11T21:00:00+02:00");
 
 export const groups: GroupId[] = [
   "A",
