@@ -437,7 +437,6 @@ Deno.serve(async (request) => {
 
     if (action === "save") {
       await saveResults(supabase, body.results);
-      await recalculateScores(supabase, body.results);
       return jsonResponse({ ok: true });
     }
 

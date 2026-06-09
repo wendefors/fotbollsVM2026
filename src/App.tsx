@@ -1794,7 +1794,7 @@ function AdminView() {
 
     try {
       await callAdminFunction("save", { results });
-      setStatus("Resultaten är sparade och poängen har räknats om.");
+      setStatus("Resultaten är sparade. Poängen har inte räknats om.");
     } catch {
       setError("Kunde inte spara resultaten.");
     } finally {
@@ -2130,7 +2130,7 @@ function AdminView() {
 
       <div className="submit-bar span-2">
         <button className="primary-button" disabled={isSaving} type="submit">
-          {isSaving ? "Sparar" : "Spara resultat och räkna om"}
+          {isSaving ? "Sparar" : "Spara resultat"}
         </button>
       </div>
         </form>
