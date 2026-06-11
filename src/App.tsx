@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
   CircleHelp,
   Eye,
   BarChart3,
@@ -3628,6 +3629,7 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
                       </option>
                     ))}
                   </select>
+                  <ChevronDown aria-hidden="true" />
                 </label>
                 <button
                   className="clear-statistics-selection"
@@ -3656,8 +3658,8 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
                     <strong>{uniqueChoices.length}</strong>
                     <p>
                       {uniqueChoices.length === 1
-                        ? "val har ingen annan gjort."
-                        : "val har ingen annan gjort."}
+                        ? "val som ingen annan gjort."
+                        : "val som ingen annan gjort."}
                     </p>
                   </article>
                   <article>
@@ -3735,7 +3737,15 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
                 {surpriseItems.map((item) => (
                   <div key={item.key}>
                     <strong>{item.label}</strong>
-                    <span>{item.detail}</span>
+                    {surpriseView === "groups" || surpriseView === "sweden" ? (
+                      <span className="surprise-detail-lines">
+                        {item.detail.split(" · ").map((line) => (
+                          <span key={line}>{line}</span>
+                        ))}
+                      </span>
+                    ) : (
+                      <span>{item.detail}</span>
+                    )}
                   </div>
                 ))}
               </div>

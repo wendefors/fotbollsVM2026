@@ -1153,20 +1153,44 @@ input[type="number"] {
 }
 
 .statistics-prediction-picker {
-  display: block;
+  position: relative;
+  display: grid;
+  align-items: center;
   min-width: 210px;
   border: 1px solid #cad5c7;
   border-radius: 8px;
-  padding: 0 10px;
   background: #ffffff;
 }
 
 .statistics-prediction-picker select {
+  position: relative;
+  z-index: 1;
   width: 100%;
   min-width: 0;
   border: 0;
-  padding-inline: 0;
+  border-radius: inherit;
+  padding: 0 42px 0 14px;
   background: transparent;
+  color: #143c35;
+  font-size: 1rem;
+  font-weight: 700;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.statistics-prediction-picker svg {
+  position: absolute;
+  z-index: 0;
+  right: 13px;
+  width: 18px;
+  height: 18px;
+  color: #526960;
+  pointer-events: none;
+}
+
+.statistics-prediction-picker:focus-within {
+  border-color: #78958a;
+  box-shadow: 0 0 0 3px rgb(20 60 53 / 10%);
 }
 
 .clear-statistics-selection {
@@ -1466,6 +1490,15 @@ input[type="number"] {
   color: #61736e;
   font-size: 0.84rem;
   text-align: left;
+}
+
+.surprise-detail-lines {
+  display: grid;
+  gap: 2px;
+}
+
+.surprise-detail-lines > span:last-child {
+  font-size: 0.78rem;
 }
 
 .sweden-match-stat {
@@ -1819,6 +1852,7 @@ input[type="number"] {
   .statistics-prediction-picker {
     flex: 1;
     width: auto;
+    min-width: 0;
   }
 
   .group-selector {
