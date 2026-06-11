@@ -6,3 +6,5 @@ project_context.md
 .env.local
 .DS_Store
 supabase/.temp
+playwright-report
+test-results

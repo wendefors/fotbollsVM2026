@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "backup:supabase": "node scripts/backup-supabase-data.mjs"
+    "backup:supabase": "node scripts/backup-supabase-data.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
@@ -19,6 +21,7 @@
     "ws": "^8.21.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
     "typescript": "^5.6.3"

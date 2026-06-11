@@ -617,6 +617,52 @@ input[type="number"] {
   color: #c95d3f;
 }
 
+.rules-page {
+  display: grid;
+  gap: 18px;
+}
+
+.rules-overview {
+  display: grid;
+  gap: 18px;
+}
+
+.rules-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.rules-summary-grid article {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e1e7dd;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcf9;
+}
+
+.rules-summary-grid strong {
+  color: #143c35;
+  font-size: 1.08rem;
+}
+
+.rules-summary-grid span,
+.rules-note p {
+  color: #526960;
+  line-height: 1.5;
+}
+
+.rules-note {
+  border-top: 1px solid #e1e7dd;
+  padding-top: 18px;
+}
+
+.rules-note p {
+  max-width: 760px;
+  margin-bottom: 0;
+}
+
 .group-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -887,6 +933,16 @@ input[type="number"] {
   border-radius: 8px;
   padding: 14px;
   background: #fbfcf9;
+  transition:
+    border-color 1.2s ease,
+    background-color 1.2s ease,
+    box-shadow 1.2s ease;
+}
+
+.message-card.new-message {
+  border-color: #b9cfae;
+  background: #f2f8ed;
+  box-shadow: inset 3px 0 0 #7da26d;
 }
 
 .message-avatar {
@@ -913,7 +969,24 @@ input[type="number"] {
   color: #143c35;
 }
 
-.message-card header span {
+.message-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.new-message-label {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #dcebd4;
+  color: #365b2d;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.message-date {
   color: #61736e;
   font-size: 0.84rem;
   white-space: nowrap;
@@ -1291,6 +1364,7 @@ input[type="number"] {
   .insight-grid,
   .stats-card-grid,
   .summary-stat-grid,
+  .rules-summary-grid,
   .group-stat-grid {
     grid-template-columns: 1fr;
   }

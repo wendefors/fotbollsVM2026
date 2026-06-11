@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClock,
   CheckCircle2,
@@ -27,7 +27,14 @@ import { createId } from "./lib/id";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type { GroupPrediction, PredictionForm, PublicPrediction } from "./lib/types";
 
-type View = "submit" | "receipt" | "predictions" | "standings" | "statistics" | "messages";
+type View =
+  | "submit"
+  | "receipt"
+  | "predictions"
+  | "standings"
+  | "statistics"
+  | "messages"
+  | "rules";
 type PredictionFilter =
   | "all"
   | "sweden"
@@ -101,6 +108,10 @@ const predictionFilters: Array<{ id: PredictionFilter; label: string }> = [
   { id: "questions", label: "Statistik" },
 ];
 const messageBoardPageSize = 25;
+const messageBoardVisitStorageKey = "fotbollsvm2026-message-board-visit";
+const legacyMessageBoardVisitStorageKey =
+  "fotbollsvm2026-message-board-last-visit";
+const messageBoardVisitStorageVersion = 3;
 
 const formatDateOnly = new Intl.DateTimeFormat("sv-SE", {
   day: "numeric",
@@ -655,7 +666,8 @@ function loadPersistedAppState(): PersistedAppState | null {
       parsed.view === "predictions" ||
       parsed.view === "standings" ||
       parsed.view === "statistics" ||
-      parsed.view === "messages"
+      parsed.view === "messages" ||
+      parsed.view === "rules"
         ? parsed.view
         : "submit";
 
@@ -956,7 +968,10 @@ function App() {
   useEffect(() => {
     if (
       isSubmissionOpen &&
-      (view === "predictions" || view === "statistics" || view === "messages")
+      (view === "predictions" ||
+        view === "statistics" ||
+        view === "messages" ||
+        view === "rules")
     ) {
       setView("standings");
       return;
@@ -1387,6 +1402,17 @@ function App() {
             <span>Statistik</span>
           </button>
         )}
+        {!isSubmissionOpen && (
+          <button
+            className={view === "rules" ? "active" : ""}
+            type="button"
+            onClick={() => setView("rules")}
+          >
+            <CircleHelp aria-hidden="true" />
+            <span className="desktop-label">Regler och poäng</span>
+            <span className="mobile-label">Regler</span>
+          </button>
+        )}
       </nav>
 
       {!isSupabaseConfigured && (
@@ -1459,7 +1485,76 @@ function App() {
       {view === "statistics" && !isSubmissionOpen && (
         <StatisticsView predictions={predictions} />
       )}
+
+      {view === "rules" && !isSubmissionOpen && <RulesView />}
     </main>
+  );
+}
+
+function RulesView() {
+  return (
+    <section className="rules-page">
+      <section className="panel">
+        <div className="section-heading with-icon">
+          <CircleHelp aria-hidden="true" />
+          <div>
+            <h2>Regler och poäng</h2>
+            <p>
+              Tippningen är stängd. Här ser du hur resultaten räknas under
+              turneringen.
+            </p>
+          </div>
+        </div>
+
+        <ul className="rule-list">
+          {scoreRules.map((rule) => (
+            <li key={rule.label}>
+              <div className="rule-icon" aria-hidden="true">
+                {getScoreRuleIcon(rule.label)}
+              </div>
+              <div>
+                <span>{rule.label}</span>
+                <strong>{rule.points}</strong>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="panel rules-overview">
+        <div className="section-heading">
+          <h2>Så avgörs tävlingen</h2>
+          <p>Poängligan uppdateras när faktiska resultat registreras.</p>
+        </div>
+
+        <div className="rules-summary-grid">
+          <article>
+            <strong>52 poäng</strong>
+            <span>är högsta möjliga totalpoäng.</span>
+          </article>
+          <article>
+            <strong>Flest poäng vinner</strong>
+            <span>och vinnaren tar hela prispotten.</span>
+          </article>
+          <article>
+            <strong>Utslagsfrågan avgör</strong>
+            <span>
+              vid lika totalpoäng. Närmast matchminuten för finalens första mål
+              placeras högst.
+            </span>
+          </article>
+        </div>
+
+        <div className="rules-note">
+          <h3>Löpande och slutgiltiga poäng</h3>
+          <p>
+            Sveriges matcher, gruppspel och topp 3 ger poäng när respektive
+            resultat är klart. Turneringsfrågorna räknas först när slutsiffrorna
+            för hela mästerskapet har fastställts.
+          </p>
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -1489,6 +1584,122 @@ function MessageBoardView({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const remainingCharacters = 300 - form.message.length;
+  const previousVisitAtRef = useRef<number | null>(null);
+  const pendingPostIdsRef = useRef(new Set<string>());
+  const hasInitializedVisitRef = useRef(false);
+  const [isVisitInitialized, setIsVisitInitialized] = useState(false);
+  const [highlightedPostIds, setHighlightedPostIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  useEffect(() => {
+    if (hasInitializedVisitRef.current) {
+      return;
+    }
+    hasInitializedVisitRef.current = true;
+
+    const visitStartedAt = Date.now();
+
+    try {
+      const storedState = window.localStorage.getItem(
+        messageBoardVisitStorageKey,
+      );
+      const parsedState = storedState
+        ? (JSON.parse(storedState) as {
+            version?: number;
+            lastVisitAt?: string;
+            pendingPostIds?: string[];
+          })
+        : null;
+      const legacyVisit = window.localStorage.getItem(
+        legacyMessageBoardVisitStorageKey,
+      );
+      const storedVisits = [legacyVisit, parsedState?.lastVisitAt]
+        .map((visit) => (visit ? Date.parse(visit) : Number.NaN))
+        .filter(Number.isFinite);
+      const parsedVisit =
+        parsedState?.version === messageBoardVisitStorageVersion
+          ? Date.parse(parsedState.lastVisitAt ?? "")
+          : storedState || legacyVisit
+            ? Math.min(
+                ...storedVisits,
+                visitStartedAt - 30 * 60 * 1_000,
+              )
+            : Number.NaN;
+      previousVisitAtRef.current = Number.isFinite(parsedVisit)
+        ? parsedVisit!
+        : visitStartedAt;
+      pendingPostIdsRef.current = new Set(parsedState?.pendingPostIds ?? []);
+      setHighlightedPostIds(new Set(pendingPostIdsRef.current));
+      window.localStorage.setItem(
+        messageBoardVisitStorageKey,
+        JSON.stringify({
+          version: messageBoardVisitStorageVersion,
+          lastVisitAt: new Date(visitStartedAt).toISOString(),
+          pendingPostIds: [...pendingPostIdsRef.current],
+        }),
+      );
+    } catch {
+      previousVisitAtRef.current = visitStartedAt;
+    }
+
+    setIsVisitInitialized(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isVisitInitialized || previousVisitAtRef.current === null) {
+      return;
+    }
+
+    setHighlightedPostIds((current) => {
+      const next = new Set(current);
+
+      for (const post of posts) {
+        if (
+          new Date(post.createdAt).getTime() > previousVisitAtRef.current!
+        ) {
+          next.add(post.id);
+          pendingPostIdsRef.current.add(post.id);
+        }
+      }
+
+      try {
+        window.localStorage.setItem(
+          messageBoardVisitStorageKey,
+          JSON.stringify({
+            version: messageBoardVisitStorageVersion,
+            lastVisitAt: new Date().toISOString(),
+            pendingPostIds: [...pendingPostIdsRef.current],
+          }),
+        );
+      } catch {
+        // The highlight still works for this visit if localStorage is unavailable.
+      }
+
+      return next;
+    });
+  }, [isVisitInitialized, posts]);
+
+  function dismissPostHighlight(postId: string) {
+    pendingPostIdsRef.current.delete(postId);
+    try {
+      window.localStorage.setItem(
+        messageBoardVisitStorageKey,
+        JSON.stringify({
+          version: messageBoardVisitStorageVersion,
+          lastVisitAt: new Date().toISOString(),
+          pendingPostIds: [...pendingPostIdsRef.current],
+        }),
+      );
+    } catch {
+      // The in-memory state is enough for the current visit.
+    }
+    setHighlightedPostIds((current) => {
+      const next = new Set(current);
+      next.delete(postId);
+      return next;
+    });
+  }
 
   return (
     <section className="message-board">
@@ -1567,18 +1778,12 @@ function MessageBoardView({
 
         <div className="message-list">
           {posts.map((post) => (
-            <article className="message-card" key={post.id}>
-              <div className="message-avatar" aria-hidden="true">
-                {(post.displayName.trim() || "Anonym").slice(0, 2).toUpperCase()}
-              </div>
-              <div>
-                <header>
-                  <strong>{post.displayName.trim() || "Anonym"}</strong>
-                  <span>{formatDateTime.format(new Date(post.createdAt))}</span>
-                </header>
-                <p>{post.message}</p>
-              </div>
-            </article>
+            <MessageBoardPostCard
+              isHighlighted={highlightedPostIds.has(post.id)}
+              key={post.id}
+              post={post}
+              onViewed={() => dismissPostHighlight(post.id)}
+            />
           ))}
         </div>
 
@@ -1596,6 +1801,104 @@ function MessageBoardView({
         )}
       </section>
     </section>
+  );
+}
+
+function MessageBoardPostCard({
+  isHighlighted,
+  post,
+  onViewed,
+}: {
+  isHighlighted: boolean;
+  post: MessageBoardPost;
+  onViewed: () => void;
+}) {
+  const cardRef = useRef<HTMLElement | null>(null);
+  const onViewedRef = useRef(onViewed);
+
+  useEffect(() => {
+    onViewedRef.current = onViewed;
+  }, [onViewed]);
+
+  useEffect(() => {
+    if (!isHighlighted || !cardRef.current) {
+      return;
+    }
+
+    let viewTimer: number | null = null;
+    let isVisible = false;
+
+    function stopTimer() {
+      if (viewTimer !== null) {
+        window.clearTimeout(viewTimer);
+        viewTimer = null;
+      }
+    }
+
+    function startTimer() {
+      if (
+        !isVisible ||
+        document.visibilityState !== "visible" ||
+        viewTimer !== null
+      ) {
+        return;
+      }
+
+      viewTimer = window.setTimeout(() => onViewedRef.current(), 5_000);
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        isVisible = entry.isIntersecting && entry.intersectionRatio >= 0.6;
+
+        if (isVisible) {
+          startTimer();
+        } else {
+          stopTimer();
+        }
+      },
+      { threshold: [0.6] },
+    );
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        startTimer();
+      } else {
+        stopTimer();
+      }
+    }
+
+    observer.observe(cardRef.current);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      stopTimer();
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isHighlighted]);
+
+  return (
+    <article
+      className={isHighlighted ? "message-card new-message" : "message-card"}
+      ref={cardRef}
+    >
+      <div className="message-avatar" aria-hidden="true">
+        {(post.displayName.trim() || "Anonym").slice(0, 2).toUpperCase()}
+      </div>
+      <div>
+        <header>
+          <div className="message-author">
+            <strong>{post.displayName.trim() || "Anonym"}</strong>
+            {isHighlighted && <span className="new-message-label">Nytt</span>}
+          </div>
+          <span className="message-date">
+            {formatDateTime.format(new Date(post.createdAt))}
+          </span>
+        </header>
+        <p>{post.message}</p>
+      </div>
+    </article>
   );
 }
 
@@ -3253,6 +3556,18 @@ function StandingsView({
 
         if (pointDifference !== 0) {
           return pointDifference;
+        }
+
+        if (filter === "all") {
+          const firstDistance =
+            firstPrediction.tieBreakerDistance ?? Number.POSITIVE_INFINITY;
+          const secondDistance =
+            secondPrediction.tieBreakerDistance ?? Number.POSITIVE_INFINITY;
+          const tieBreakerDifference = firstDistance - secondDistance;
+
+          if (tieBreakerDifference !== 0) {
+            return tieBreakerDifference;
+          }
         }
 
         return firstPrediction.initials.localeCompare(secondPrediction.initials, "sv-SE");
