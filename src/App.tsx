@@ -7,6 +7,7 @@ import {
   BarChart3,
   Medal,
   MessageSquare,
+  Sparkles,
   RotateCcw,
   Send,
   ShieldCheck,
@@ -96,6 +97,7 @@ type AdminResults = {
   };
 };
 type AdminViewTab = "results" | "messages";
+type SurpriseView = "champions" | "groups" | "sweden" | "participants";
 type AdminMessageBoardPost = MessageBoardPost & {
   isHidden: boolean;
 };
@@ -511,6 +513,125 @@ function getConsensusItems(predictions: PublicPrediction[]) {
   );
 
   return items;
+}
+
+type PredictionChoice = {
+  label: string;
+  section: string;
+  value: string;
+};
+
+function getPredictionChoices(prediction: PublicPrediction): PredictionChoice[] {
+  const choices: PredictionChoice[] = [];
+
+  for (const match of initialSwedenMatches) {
+    const predictedMatch = prediction.swedenMatches.find(
+      (candidate) => candidate.id === match.id,
+    );
+    choices.push({
+      label: `${match.homeTeam} - ${match.awayTeam}`,
+      section: "Sveriges matcher",
+      value: formatPredictionScore(
+        predictedMatch?.homeGoals ?? "",
+        predictedMatch?.awayGoals ?? "",
+      ),
+    });
+  }
+
+  for (const group of groups) {
+    const predictedGroup = prediction.groups.find(
+      (candidate) => candidate.group === group,
+    );
+    choices.push(
+      {
+        label: `Grupp ${group}, etta`,
+        section: "Gruppspel",
+        value: predictedGroup?.winner ?? "",
+      },
+      {
+        label: `Grupp ${group}, tvåa`,
+        section: "Gruppspel",
+        value: predictedGroup?.runnerUp ?? "",
+      },
+    );
+  }
+
+  choices.push(
+    {
+      label: "Världsmästare",
+      section: "Topp 3",
+      value: prediction.podium.champion,
+    },
+    {
+      label: "Finaltvåa",
+      section: "Topp 3",
+      value: prediction.podium.runnerUp,
+    },
+    {
+      label: "Trea",
+      section: "Topp 3",
+      value: prediction.podium.thirdPlace,
+    },
+  );
+
+  return choices.filter((choice) => choice.value !== "");
+}
+
+function getChoiceStatistics(predictions: PublicPrediction[]) {
+  const statistics = new Map<
+    string,
+    {
+      counts: Map<string, number>;
+      topValue: string;
+      topCount: number;
+    }
+  >();
+
+  for (const prediction of predictions) {
+    for (const choice of getPredictionChoices(prediction)) {
+      const current = statistics.get(choice.label) ?? {
+        counts: new Map<string, number>(),
+        topValue: "",
+        topCount: 0,
+      };
+      const count = (current.counts.get(choice.value) ?? 0) + 1;
+      current.counts.set(choice.value, count);
+
+      if (
+        count > current.topCount ||
+        (count === current.topCount &&
+          choice.value.localeCompare(current.topValue, "sv-SE") < 0)
+      ) {
+        current.topValue = choice.value;
+        current.topCount = count;
+      }
+
+      statistics.set(choice.label, current);
+    }
+  }
+
+  return statistics;
+}
+
+function getSwedenOutcome(
+  match: (typeof initialSwedenMatches)[number],
+  homeGoals: number | "",
+  awayGoals: number | "",
+) {
+  const sign = getMatchSign(homeGoals, awayGoals);
+
+  if (!sign) {
+    return "";
+  }
+
+  if (sign === "X") {
+    return "Oavgjort";
+  }
+
+  const swedenIsHome = match.homeTeam === "Sverige";
+  const swedenWon =
+    (swedenIsHome && sign === "1") || (!swedenIsHome && sign === "2");
+  return swedenWon ? "Svensk seger" : "Svensk förlust";
 }
 
 const emptyGroups: GroupPrediction[] = groups.map((group) => ({
@@ -3206,7 +3327,166 @@ function PredictionComparisonView({
 }
 
 function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
+  const [selectedPredictionId, setSelectedPredictionId] = useState("");
+  const [selectedGroup, setSelectedGroup] = useState<GroupPrediction["group"]>("A");
+  const [surpriseView, setSurpriseView] = useState<SurpriseView>("champions");
   const total = predictions.length;
+  const sortedPredictions = useMemo(
+    () =>
+      [...predictions].sort((first, second) =>
+        first.initials.localeCompare(second.initials, "sv-SE"),
+      ),
+    [predictions],
+  );
+  const selectedPrediction = predictions.find(
+    (prediction) => prediction.id === selectedPredictionId,
+  );
+  const choiceStatistics = useMemo(
+    () => getChoiceStatistics(predictions),
+    [predictions],
+  );
+  const selectedChoiceProfile = selectedPrediction
+    ? getPredictionChoices(selectedPrediction)
+        .map((choice) => {
+          const statistics = choiceStatistics.get(choice.label);
+          const count = statistics?.counts.get(choice.value) ?? 0;
+
+          return {
+            ...choice,
+            count,
+            percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+            isMajority: statistics?.topValue === choice.value,
+          };
+        })
+        .sort(
+          (first, second) =>
+            first.percentage - second.percentage ||
+            first.label.localeCompare(second.label, "sv-SE"),
+        )
+    : [];
+  const majorityMatches = selectedChoiceProfile.filter(
+    (choice) => choice.isMajority,
+  ).length;
+  const uniqueChoices = selectedChoiceProfile.filter(
+    (choice) => choice.count === 1,
+  );
+  const unusualChoices = selectedChoiceProfile.slice(0, 5);
+  const championSurprises = getTopCounts(
+    predictions.map((prediction) => prediction.podium.champion),
+    predictions.length,
+  )
+    .sort(
+      (first, second) =>
+        first.count - second.count ||
+        first.label.localeCompare(second.label, "sv-SE"),
+    )
+    .slice(0, 12)
+    .map((item) => ({
+      key: item.label,
+      label: item.label,
+      detail: `${item.count} tippare`,
+    }));
+  const groupSurprises = groups
+    .flatMap((group) => {
+      const groupPredictions = predictions
+        .map((prediction) =>
+          prediction.groups.find(
+            (groupPrediction) => groupPrediction.group === group,
+          ),
+        )
+        .filter(
+          (prediction): prediction is GroupPrediction => Boolean(prediction),
+        );
+
+      return [
+        ...getTopCounts(
+          groupPredictions.map((prediction) => prediction.winner),
+          predictions.length,
+        ).map((item) => ({
+          key: `${group}-winner-${item.label}`,
+          label: item.label,
+          detail: `Grupp ${group}, etta · ${item.count} tippare`,
+          count: item.count,
+        })),
+        ...getTopCounts(
+          groupPredictions.map((prediction) => prediction.runnerUp),
+          predictions.length,
+        ).map((item) => ({
+          key: `${group}-runner-up-${item.label}`,
+          label: item.label,
+          detail: `Grupp ${group}, tvåa · ${item.count} tippare`,
+          count: item.count,
+        })),
+      ];
+    })
+    .sort(
+      (first, second) =>
+        first.count - second.count ||
+        first.detail.localeCompare(second.detail, "sv-SE") ||
+        first.label.localeCompare(second.label, "sv-SE"),
+    )
+    .slice(0, 12);
+  const swedenResultSurprises = initialSwedenMatches.flatMap((match) => {
+    const results = getTopCounts(
+      predictions.map((prediction) => {
+        const predictedMatch = prediction.swedenMatches.find(
+          (candidate) => candidate.id === match.id,
+        );
+        return predictedMatch
+          ? formatPredictionScore(
+              predictedMatch.homeGoals,
+              predictedMatch.awayGoals,
+            )
+          : "";
+      }),
+      predictions.length,
+    );
+
+    return results.map((result) => ({
+      key: `${match.id}-${result.label}`,
+      label: result.label,
+      detail: `${match.homeTeam} - ${match.awayTeam} · ${result.count} tippare`,
+      count: result.count,
+    }));
+  })
+    .sort(
+      (first, second) =>
+        first.count - second.count ||
+        first.detail.localeCompare(second.detail, "sv-SE") ||
+        first.label.localeCompare(second.label, "sv-SE"),
+    )
+    .slice(0, 12);
+  const contrarianPredictions = predictions
+    .map((prediction) => {
+      const choices = getPredictionChoices(prediction);
+      const majorityMatchesForPrediction = choices.filter((choice) => {
+        const statistics = choiceStatistics.get(choice.label);
+        return statistics?.topValue === choice.value;
+      }).length;
+
+      return {
+        initials: prediction.initials,
+        majorityMatches: majorityMatchesForPrediction,
+        totalChoices: choices.length,
+      };
+    })
+    .sort(
+      (first, second) =>
+        first.majorityMatches - second.majorityMatches ||
+        first.initials.localeCompare(second.initials, "sv-SE"),
+    )
+    .slice(0, 12)
+    .map((prediction, index) => ({
+      key: prediction.initials,
+      label: `${index + 1}. ${prediction.initials}`,
+      detail: `${prediction.majorityMatches} av ${prediction.totalChoices} majoritetsval`,
+    }));
+  const surpriseItems = {
+    champions: championSurprises,
+    groups: groupSurprises,
+    sweden: swedenResultSurprises,
+    participants: contrarianPredictions,
+  }[surpriseView];
   const swedenGroupPredictions = predictions
     .map((prediction) =>
       prediction.groups.find((groupPrediction) => groupPrediction.group === "F"),
@@ -3328,31 +3608,210 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
             </div>
           </section>
 
+          <section className="personal-statistics">
+            <div className="statistics-section-heading">
+              <div>
+                <h3>Ditt tips mot kollektivet</h3>
+                <p>Välj dina initialer och se var du följer strömmen och sticker ut.</p>
+              </div>
+              <div className="statistics-prediction-actions">
+                <label className="statistics-prediction-picker">
+                  <select
+                    aria-label="Välj dina initialer"
+                    value={selectedPredictionId}
+                    onChange={(event) => setSelectedPredictionId(event.target.value)}
+                  >
+                    <option value="">Välj initialer</option>
+                    {sortedPredictions.map((prediction) => (
+                      <option value={prediction.id} key={prediction.id}>
+                        {prediction.initials}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="clear-statistics-selection"
+                  type="button"
+                  disabled={!selectedPredictionId}
+                  onClick={() => setSelectedPredictionId("")}
+                >
+                  <RotateCcw aria-hidden="true" />
+                  Rensa
+                </button>
+              </div>
+            </div>
+
+            {selectedPrediction ? (
+              <>
+                <div className="personal-summary">
+                  <article>
+                    <span>Med majoriteten</span>
+                    <strong>
+                      {majorityMatches} av {selectedChoiceProfile.length}
+                    </strong>
+                    <p>val matchar det vanligaste tipset.</p>
+                  </article>
+                  <article>
+                    <span>Unika val</span>
+                    <strong>{uniqueChoices.length}</strong>
+                    <p>
+                      {uniqueChoices.length === 1
+                        ? "val har ingen annan gjort."
+                        : "val har ingen annan gjort."}
+                    </p>
+                  </article>
+                  <article>
+                    <span>Mest kontroversiellt</span>
+                    <strong>{unusualChoices[0]?.value ?? "Saknas"}</strong>
+                    <p>
+                      {unusualChoices[0]?.percentage ?? 0}% har valt samma för{" "}
+                      {unusualChoices[0]?.label ?? "den frågan"}.
+                    </p>
+                  </article>
+                </div>
+
+                <div className="unusual-choice-list">
+                  <h4>Dina mest ovanliga val</h4>
+                  {unusualChoices.map((choice) => (
+                    <div className="unusual-choice-row" key={choice.label}>
+                      <div className="unusual-choice-main">
+                        <span>{choice.section}</span>
+                        <p>
+                          <strong>{choice.label}:</strong> {choice.value}
+                        </p>
+                        <span className="unusual-choice-count">
+                          {choice.count} av {total} ({choice.percentage}%)
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="statistics-empty-selection">
+                <Sparkles aria-hidden="true" />
+                <p>Välj initialer för att skapa din personliga statistikprofil.</p>
+              </div>
+            )}
+          </section>
+
+          <section>
+            <div className="statistics-section-heading">
+              <div>
+                <h3>Överraskningarna</h3>
+                <p>Tippen som går längst från den breda mittfåran.</p>
+              </div>
+              <div className="surprise-selector" aria-label="Välj överraskningar">
+                {[
+                  { id: "champions" as const, label: "Världsmästare" },
+                  { id: "groups" as const, label: "Gruppspel" },
+                  { id: "sweden" as const, label: "Sverige" },
+                  { id: "participants" as const, label: "Tippare" },
+                ].map((option) => (
+                  <button
+                    className={surpriseView === option.id ? "active" : ""}
+                    type="button"
+                    onClick={() => setSurpriseView(option.id)}
+                    key={option.id}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <article className="stats-card surprise-panel">
+              <div className="surprise-panel-heading">
+                <h4>
+                  {surpriseView === "champions"
+                    ? "Ovanliga världsmästare"
+                    : surpriseView === "groups"
+                      ? "Ovanliga gruppval"
+                      : surpriseView === "sweden"
+                        ? "Ovanliga svenska resultat"
+                        : "Mest egensinniga tips"}
+                </h4>
+              </div>
+              <div className="surprise-list">
+                {surpriseItems.map((item) => (
+                  <div key={item.key}>
+                    <strong>{item.label}</strong>
+                    <span>{item.detail}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </section>
+
           <section>
             <h3>Sveriges matcher</h3>
             <div className="stats-card-grid">
               {initialSwedenMatches.map((match) => {
-                const topResults = getTopCounts(
-                  predictions.map((prediction) => {
-                    const predictionMatch = prediction.swedenMatches.find(
+                const predictedMatches = predictions
+                  .map((prediction) =>
+                    prediction.swedenMatches.find(
                       (candidate) => candidate.id === match.id,
-                    );
-
-                    return predictionMatch
-                      ? formatPredictionScore(
-                          predictionMatch.homeGoals,
-                          predictionMatch.awayGoals,
-                        )
-                      : "";
-                  }),
+                    ),
+                  )
+                  .filter(
+                    (
+                      predictedMatch,
+                    ): predictedMatch is PublicPrediction["swedenMatches"][number] =>
+                      Boolean(predictedMatch),
+                  );
+                const topResults = getTopCounts(
+                  predictedMatches.map((predictedMatch) =>
+                    formatPredictionScore(
+                      predictedMatch.homeGoals,
+                      predictedMatch.awayGoals,
+                    ),
+                  ),
                   3,
+                );
+                const outcomeCounts = getCountsForLabels(
+                  predictedMatches.map((predictedMatch) =>
+                    getSwedenOutcome(
+                      match,
+                      predictedMatch.homeGoals,
+                      predictedMatch.awayGoals,
+                    ),
+                  ),
+                  ["Svensk seger", "Oavgjort", "Svensk förlust"],
                 );
 
                 return (
-                  <article className="stats-card" key={match.id}>
+                  <article className="stats-card sweden-match-stat" key={match.id}>
                     <h4>
                       {match.homeTeam} - {match.awayTeam}
                     </h4>
+                    <div className="outcome-bar" aria-label="Fördelning av matchutfall">
+                      {outcomeCounts.map((outcome) => (
+                        <span
+                          className={outcome.label
+                            .replace("Svensk ", "")
+                            .toLowerCase()}
+                          key={outcome.label}
+                          style={{ width: `${outcome.percentage}%` }}
+                          title={`${outcome.label}: ${outcome.percentage}%`}
+                        />
+                      ))}
+                    </div>
+                    <div className="outcome-legend">
+                      {outcomeCounts.map((outcome) => (
+                        <span key={outcome.label}>
+                          <i
+                            className={outcome.label
+                              .replace("Svensk ", "")
+                              .toLowerCase()}
+                          />
+                          {outcome.label === "Svensk seger"
+                            ? "Seger"
+                            : outcome.label === "Svensk förlust"
+                              ? "Förlust"
+                              : outcome.label}{" "}
+                          <strong>{outcome.percentage}%</strong>
+                        </span>
+                      ))}
+                    </div>
                     <div className="result-percent-list">
                       {topResults.map((result, index) => (
                         <div
@@ -3375,9 +3834,27 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
           </section>
 
           <section>
-            <h3>Gruppspel</h3>
-            <div className="group-stat-grid">
-              {groups.map((group) => {
+            <div className="statistics-section-heading group-statistics-heading">
+              <div>
+                <h3>Gruppspel</h3>
+                <p>Välj en grupp för att granska fördelningen mellan lagen.</p>
+              </div>
+              <div className="group-selector" aria-label="Välj grupp">
+                {groups.map((group) => (
+                  <button
+                    aria-label={`Grupp ${group}`}
+                    className={selectedGroup === group ? "active" : ""}
+                    type="button"
+                    onClick={() => setSelectedGroup(group)}
+                    key={group}
+                  >
+                    {group}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="group-stat-focus">
+              {[selectedGroup].map((group) => {
                 const winnerCounts = getCountsForLabels(
                   predictions.map(
                     (prediction) =>
@@ -3421,7 +3898,16 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
 
                 return (
                   <article className="stats-card" key={group}>
-                    <h4>Grupp {group}</h4>
+                    <div className="group-focus-header">
+                      <div>
+                        <span>Vald grupp</span>
+                        <h4>Grupp {group}</h4>
+                      </div>
+                      <div className="group-bar-legend">
+                        <span><i className="winner" />Etta</span>
+                        <span><i className="runner-up" />Tvåa</span>
+                      </div>
+                    </div>
                     <div className="grouped-bars">
                       {sortedTeams.map((team, index) => {
                         const winner = winnerCounts.find((item) => item.label === team);
@@ -3439,6 +3925,7 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
                                   percentage: winner?.percentage ?? 0,
                                 }}
                                 isLeading={index === 0}
+                                variant="winner"
                               />
                               <BarRow
                                 item={{
@@ -3450,6 +3937,7 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
                                   runnerUpPercentage === leadingRunnerUpPercentage &&
                                   leadingRunnerUpPercentage > 0
                                 }
+                                variant="runner-up"
                               />
                             </div>
                           </div>
@@ -3518,6 +4006,7 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
 function BarRow({
   isLeading = false,
   item,
+  variant,
 }: {
   isLeading?: boolean;
   item: {
@@ -3525,9 +4014,18 @@ function BarRow({
     count: number;
     percentage: number;
   };
+  variant?: "winner" | "runner-up";
 }) {
   return (
-    <div className={isLeading ? "bar-row leading" : "bar-row"}>
+    <div
+      className={[
+        "bar-row",
+        isLeading ? "leading" : "",
+        variant ? `bar-row-${variant}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <div className="bar-row-label">
         <span>{item.label}</span>
         <strong>{item.percentage}%</strong>
