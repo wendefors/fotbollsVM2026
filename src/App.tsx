@@ -1436,15 +1436,13 @@ function App() {
             </div>
           )}
 
-          <div className="deadline-panel">
-            <SquareStack aria-hidden="true" />
-            <span>
-              {isSubmissionOpen
-                ? "Inskickade tips just nu"
-                : "Antal tippare i tävlingen"}
-            </span>
-            <strong>{predictions.length}</strong>
-          </div>
+          {isSubmissionOpen && (
+            <div className="deadline-panel">
+              <SquareStack aria-hidden="true" />
+              <span>Inskickade tips just nu</span>
+              <strong>{predictions.length}</strong>
+            </div>
+          )}
 
           {!isSubmissionOpen && (
             <div className="deadline-panel live-stats-panel">
