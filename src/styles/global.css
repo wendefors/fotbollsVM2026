@@ -41,6 +41,111 @@ button:disabled {
   padding: 32px 0 56px;
 }
 
+.update-banner {
+  position: sticky;
+  top: 12px;
+  z-index: 20;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 18px;
+  border: 2px solid #143c35;
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: #f8d35f;
+  color: #143c35;
+  box-shadow: 0 18px 42px rgb(20 60 53 / 22%);
+}
+
+.update-banner div {
+  display: grid;
+  gap: 3px;
+}
+
+.update-banner strong {
+  font-size: 1.05rem;
+}
+
+.update-banner span {
+  color: #244840;
+  font-size: 0.94rem;
+  line-height: 1.4;
+}
+
+.update-banner button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 15px;
+  background: #143c35;
+  color: #ffffff;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.update-banner button:hover {
+  background: #0f2f29;
+}
+
+.update-banner svg {
+  width: 18px;
+  height: 18px;
+}
+
+.info-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 18px;
+  border: 1px solid #d7e1d3;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #eef4eb;
+  color: #244840;
+  box-shadow: 0 8px 20px rgb(43 68 55 / 8%);
+}
+
+.info-banner > svg {
+  width: 19px;
+  height: 19px;
+  color: #26705d;
+}
+
+.info-banner span {
+  min-width: 0;
+  font-size: 0.94rem;
+  line-height: 1.45;
+}
+
+.info-banner button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  background: transparent;
+  color: #526960;
+}
+
+.info-banner button:hover {
+  background: #dfe8dc;
+  color: #143c35;
+}
+
+.info-banner button svg {
+  width: 18px;
+  height: 18px;
+}
+
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1506,6 +1611,55 @@ input[type="number"] {
   align-content: start;
 }
 
+.actual-result-panel,
+.actual-group-panel {
+  display: grid;
+  gap: 11px;
+  margin-bottom: 14px;
+  border: 1px solid #d7e1d3;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f4f7f1;
+}
+
+.actual-result-panel {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.actual-result-panel div,
+.actual-group-summary div,
+.actual-group-metrics div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.actual-result-panel span,
+.actual-group-panel span {
+  color: #61736e;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.actual-result-panel strong,
+.actual-group-panel strong {
+  min-width: 0;
+  color: #143c35;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.actual-result-empty {
+  margin-bottom: 14px;
+  border: 1px dashed #cbd6c8;
+  border-radius: 8px;
+  padding: 11px 12px;
+  color: #61736e;
+  background: #fbfcf9;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
 .outcome-bar {
   display: flex;
   width: 100%;
@@ -1650,6 +1804,18 @@ input[type="number"] {
   background: #c95d3f;
 }
 
+.actual-group-summary,
+.actual-group-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.actual-group-summary {
+  border-bottom: 1px solid #dfe8dc;
+  padding-bottom: 11px;
+}
+
 .bar-list {
   display: grid;
   gap: 12px;
@@ -1760,8 +1926,20 @@ input[type="number"] {
 }
 
 .team-bar-row > strong {
+  display: grid;
+  gap: 5px;
   color: #143c35;
   font-size: 0.92rem;
+}
+
+.result-badge {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: #e9efe5;
+  color: #526960;
+  font-size: 0.68rem;
+  font-weight: 800;
 }
 
 .dual-bars {
@@ -1822,6 +2000,22 @@ input[type="number"] {
   .app-shell {
     width: min(100% - 24px, 1180px);
     padding-top: 20px;
+  }
+
+  .update-banner {
+    top: 8px;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .update-banner button {
+    width: 100%;
+  }
+
+  .info-banner {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
   }
 
   .hero,
@@ -1892,6 +2086,13 @@ input[type="number"] {
     grid-template-rows: none;
     grid-auto-flow: row;
     grid-auto-columns: auto;
+  }
+
+  .actual-result-panel,
+  .actual-group-summary,
+  .actual-group-metrics,
+  .team-bar-row {
+    grid-template-columns: 1fr;
   }
 
   .compare-toolbar,

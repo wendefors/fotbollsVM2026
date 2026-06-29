@@ -16,6 +16,7 @@ import {
   Star,
   Table2,
   Trophy,
+  X,
 } from "lucide-react";
 import {
   groupTeams,
@@ -59,6 +60,9 @@ type LiveTournamentStats = {
   yellowCards: number | "";
   redCards: number | "";
   totalGoals: number | "";
+  updatedAt: string | null;
+};
+type PublicTournamentResults = AdminResults & {
   updatedAt: string | null;
 };
 type PersistedAppState = {
@@ -121,6 +125,30 @@ const formatDateOnly = new Intl.DateTimeFormat("sv-SE", {
   month: "long",
   year: "numeric",
 });
+const versionCheckIntervalMs = 60_000;
+const statsInfoBannerStorageKey = "fotbollsvm2026.statsInfoBannerDismissed";
+const statsInfoBannerMessage =
+  "Ny statistik gällande utfallet i Sveriges matcher och gruppspelen finns nu tillgänglig.";
+
+type AppVersionPayload = {
+  version?: string;
+};
+
+async function fetchAppVersion() {
+  const versionUrl = `${import.meta.env.BASE_URL}version.json?ts=${Date.now()}`;
+  const response = await fetch(versionUrl, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as AppVersionPayload;
+  return typeof payload.version === "string" && payload.version !== ""
+    ? payload.version
+    : null;
+}
 
 function getFilteredPoints(prediction: PublicPrediction, filter: PredictionFilter) {
   if (filter === "sweden") {
@@ -635,6 +663,17 @@ function getSwedenOutcome(
   return swedenWon ? "Svensk seger" : "Svensk förlust";
 }
 
+function isCompleteMatchResult(match: {
+  homeGoals: number | "";
+  awayGoals: number | "";
+}) {
+  return typeof match.homeGoals === "number" && typeof match.awayGoals === "number";
+}
+
+function isCompleteGroupResult(group: { winner: string; runnerUp: string }) {
+  return group.winner !== "" && group.runnerUp !== "";
+}
+
 const emptyGroups: GroupPrediction[] = groups.map((group) => ({
   group,
   winner: "",
@@ -665,6 +704,16 @@ const initialAdminResults: AdminResults = {
   tieBreaker: {
     finalFirstGoalMinute: "",
   },
+};
+
+const initialPublicTournamentResults: PublicTournamentResults = {
+  ...initialAdminResults,
+  swedenMatches: initialAdminResults.swedenMatches.map((match) => ({ ...match })),
+  groups: initialAdminResults.groups.map((group) => ({ ...group })),
+  podium: { ...initialAdminResults.podium },
+  statistics: { ...initialAdminResults.statistics },
+  tieBreaker: { ...initialAdminResults.tieBreaker },
+  updatedAt: null,
 };
 
 const initialForm: PredictionForm = {
@@ -936,6 +985,11 @@ function App() {
   const [receipt, setReceipt] = useState<PublicPrediction | null>(() => persistedState?.receipt ?? null);
   const [focusedPredictionId, setFocusedPredictionId] = useState<string | null>(null);
   const [liveTournamentStats, setLiveTournamentStats] = useState<LiveTournamentStats | null>(null);
+  const [publicTournamentResults, setPublicTournamentResults] =
+    useState<PublicTournamentResults>(initialPublicTournamentResults);
+  const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
+  const [isStatsInfoBannerVisible, setIsStatsInfoBannerVisible] = useState(false);
+  const appVersionRef = useRef<string | null>(null);
   const [messageBoardPosts, setMessageBoardPosts] = useState<MessageBoardPost[]>([]);
   const [messageBoardForm, setMessageBoardForm] = useState<MessageBoardForm>({
     displayName: "",
@@ -957,6 +1011,72 @@ function App() {
     () => [...predictions].sort((a, b) => b.points - a.points),
     [predictions],
   );
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function checkVersion() {
+      try {
+        const latestVersion = await fetchAppVersion();
+
+        if (!isActive || !latestVersion) {
+          return;
+        }
+
+        if (!appVersionRef.current) {
+          appVersionRef.current = latestVersion;
+          setIsStatsInfoBannerVisible(
+            window.localStorage.getItem(
+              `${statsInfoBannerStorageKey}.${latestVersion}`,
+            ) !== "true",
+          );
+          return;
+        }
+
+        if (latestVersion !== appVersionRef.current) {
+          setIsUpdateAvailable(true);
+          setIsStatsInfoBannerVisible(false);
+        }
+      } catch (error) {
+        // Version checks should never interrupt the app.
+      }
+    }
+
+    function checkVersionWhenVisible() {
+      if (document.visibilityState === "visible") {
+        void checkVersion();
+      }
+    }
+
+    void checkVersion();
+    const intervalId = window.setInterval(checkVersion, versionCheckIntervalMs);
+    window.addEventListener("focus", checkVersionWhenVisible);
+    document.addEventListener("visibilitychange", checkVersionWhenVisible);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", checkVersionWhenVisible);
+      document.removeEventListener("visibilitychange", checkVersionWhenVisible);
+    };
+  }, []);
+
+  function dismissStatsInfoBanner() {
+    const currentVersion = appVersionRef.current;
+
+    if (currentVersion) {
+      try {
+        window.localStorage.setItem(
+          `${statsInfoBannerStorageKey}.${currentVersion}`,
+          "true",
+        );
+      } catch (error) {
+        // Dismissal persistence is a convenience only.
+      }
+    }
+
+    setIsStatsInfoBannerVisible(false);
+  }
 
   useEffect(() => {
     async function loadPredictions() {
@@ -1005,32 +1125,47 @@ function App() {
   }, []);
 
   useEffect(() => {
-    async function loadLiveTournamentStats() {
+    async function loadTournamentResults() {
       if (!supabase) {
         return;
       }
 
       const { data, error } = await supabase
         .from("tournament_results")
-        .select("result_payload,updated_at")
-        .eq("result_type", "statistics")
-        .eq("result_key", "totals")
-        .maybeSingle();
+        .select("result_type,result_key,result_payload,updated_at");
 
       if (error || !data) {
         setLiveTournamentStats(null);
+        setPublicTournamentResults(initialPublicTournamentResults);
         return;
       }
 
+      const mergedResults = mergeAdminResults(data);
+      const sortedUpdateTimes = data
+        .map((row) => row.updated_at)
+        .filter((value): value is string => Boolean(value))
+        .sort();
+      const latestUpdatedAt =
+        sortedUpdateTimes.length > 0
+          ? sortedUpdateTimes[sortedUpdateTimes.length - 1]
+          : null;
+      const statisticsRow = data.find(
+        (row) => row.result_type === "statistics" && row.result_key === "totals",
+      );
+
+      setPublicTournamentResults({
+        ...mergedResults,
+        updatedAt: latestUpdatedAt,
+      });
       setLiveTournamentStats({
-        yellowCards: data.result_payload?.yellowCards ?? "",
-        redCards: data.result_payload?.redCards ?? "",
-        totalGoals: data.result_payload?.totalGoals ?? "",
-        updatedAt: data.updated_at ?? null,
+        yellowCards: statisticsRow?.result_payload?.yellowCards ?? "",
+        redCards: statisticsRow?.result_payload?.redCards ?? "",
+        totalGoals: statisticsRow?.result_payload?.totalGoals ?? "",
+        updatedAt: statisticsRow?.updated_at ?? null,
       });
     }
 
-    void loadLiveTournamentStats();
+    void loadTournamentResults();
   }, []);
 
   useEffect(() => {
@@ -1417,6 +1552,33 @@ function App() {
 
   return (
     <main className="app-shell">
+      {isUpdateAvailable && (
+        <div className="update-banner" role="status">
+          <div>
+            <strong>Ny version finns</strong>
+            <span>Uppdatera sidan för att se senaste resultat och statistik.</span>
+          </div>
+          <button type="button" onClick={() => window.location.reload()}>
+            <RotateCcw aria-hidden="true" />
+            Uppdatera nu
+          </button>
+        </div>
+      )}
+
+      {!isUpdateAvailable && !isSubmissionOpen && isStatsInfoBannerVisible && (
+        <div className="info-banner" role="status">
+          <BarChart3 aria-hidden="true" />
+          <span>{statsInfoBannerMessage}</span>
+          <button
+            aria-label="Stäng informationsbanner"
+            type="button"
+            onClick={dismissStatsInfoBanner}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
       <section className="hero">
         <div>
           <p className="eyebrow">Fotbolls-VM 2026</p>
@@ -1603,7 +1765,7 @@ function App() {
       )}
 
       {view === "statistics" && !isSubmissionOpen && (
-        <StatisticsView predictions={predictions} />
+        <StatisticsView predictions={predictions} results={publicTournamentResults} />
       )}
 
       {view === "rules" && !isSubmissionOpen && <RulesView />}
@@ -3325,7 +3487,13 @@ function PredictionComparisonView({
   );
 }
 
-function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
+function StatisticsView({
+  predictions,
+  results,
+}: {
+  predictions: PublicPrediction[];
+  results: PublicTournamentResults;
+}) {
   const [selectedPredictionId, setSelectedPredictionId] = useState("");
   const [selectedGroup, setSelectedGroup] = useState<GroupPrediction["group"]>("A");
   const [surpriseView, setSurpriseView] = useState<SurpriseView>("champions");
@@ -3754,6 +3922,24 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
             <h3>Sveriges matcher</h3>
             <div className="stats-card-grid">
               {initialSwedenMatches.map((match) => {
+                const actualMatch = results.swedenMatches.find(
+                  (candidate) => candidate.id === match.id,
+                );
+                const hasActualResult = actualMatch
+                  ? isCompleteMatchResult(actualMatch)
+                  : false;
+                const actualScore =
+                  actualMatch && hasActualResult
+                    ? formatPredictionScore(actualMatch.homeGoals, actualMatch.awayGoals)
+                    : "";
+                const actualSign =
+                  actualMatch && hasActualResult
+                    ? getMatchSign(actualMatch.homeGoals, actualMatch.awayGoals)
+                    : "";
+                const actualOutcome =
+                  actualMatch && hasActualResult
+                    ? getSwedenOutcome(match, actualMatch.homeGoals, actualMatch.awayGoals)
+                    : "";
                 const predictedMatches = predictions
                   .map((prediction) =>
                     prediction.swedenMatches.find(
@@ -3785,12 +3971,60 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
                   ),
                   ["Svensk seger", "Oavgjort", "Svensk förlust"],
                 );
+                const exactResultCount =
+                  actualMatch && hasActualResult
+                    ? predictedMatches.filter(
+                        (predictedMatch) =>
+                          predictedMatch.homeGoals === actualMatch.homeGoals &&
+                          predictedMatch.awayGoals === actualMatch.awayGoals,
+                      ).length
+                    : 0;
+                const correctSignCount =
+                  actualSign && actualMatch
+                    ? predictedMatches.filter(
+                        (predictedMatch) =>
+                          getMatchSign(
+                            predictedMatch.homeGoals,
+                            predictedMatch.awayGoals,
+                          ) === actualSign,
+                      ).length
+                    : 0;
+                const exactResultPercentage =
+                  predictedMatches.length > 0
+                    ? Math.round((exactResultCount / predictedMatches.length) * 100)
+                    : 0;
+                const correctSignPercentage =
+                  predictedMatches.length > 0
+                    ? Math.round((correctSignCount / predictedMatches.length) * 100)
+                    : 0;
 
                 return (
                   <article className="stats-card sweden-match-stat" key={match.id}>
                     <h4>
                       {match.homeTeam} - {match.awayTeam}
                     </h4>
+                    {hasActualResult && actualMatch ? (
+                      <div className="actual-result-panel">
+                        <div>
+                          <span>Facit</span>
+                          <strong>{actualScore}</strong>
+                        </div>
+                        <div>
+                          <span>Exakt rätt</span>
+                          <strong>
+                            {exactResultCount} ({exactResultPercentage}%)
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Rätt tecken</span>
+                          <strong>
+                            {correctSignCount} ({correctSignPercentage}%)
+                          </strong>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="actual-result-empty">Facit saknas ännu.</div>
+                    )}
                     <div className="outcome-bar" aria-label="Fördelning av matchutfall">
                       {outcomeCounts.map((outcome) => (
                         <span
@@ -3882,6 +4116,60 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
                 const leadingRunnerUpPercentage = Math.max(
                   ...runnerUpCounts.map((item) => item.percentage),
                 );
+                const actualGroup = results.groups.find(
+                  (candidate) => candidate.group === group,
+                );
+                const hasActualGroupResult = actualGroup
+                  ? isCompleteGroupResult(actualGroup)
+                  : false;
+                const exactGroupOrderCount =
+                  actualGroup && hasActualGroupResult
+                    ? predictions.filter((prediction) => {
+                        const predictedGroup = prediction.groups.find(
+                          (groupPrediction) => groupPrediction.group === group,
+                        );
+
+                        return (
+                          predictedGroup?.winner === actualGroup.winner &&
+                          predictedGroup?.runnerUp === actualGroup.runnerUp
+                        );
+                      }).length
+                    : 0;
+                const bothTopTwoCount =
+                  actualGroup && hasActualGroupResult
+                    ? predictions.filter((prediction) => {
+                        const predictedGroup = prediction.groups.find(
+                          (groupPrediction) => groupPrediction.group === group,
+                        );
+                        const predictedTeams = [
+                          predictedGroup?.winner ?? "",
+                          predictedGroup?.runnerUp ?? "",
+                        ];
+
+                        return (
+                          predictedTeams.includes(actualGroup.winner) &&
+                          predictedTeams.includes(actualGroup.runnerUp)
+                        );
+                      }).length
+                    : 0;
+                const wrongOrderTopTwoCount = Math.max(
+                  bothTopTwoCount - exactGroupOrderCount,
+                  0,
+                );
+                const exactGroupOrderPercentage =
+                  total > 0 ? Math.round((exactGroupOrderCount / total) * 100) : 0;
+                const wrongOrderTopTwoPercentage =
+                  total > 0 ? Math.round((wrongOrderTopTwoCount / total) * 100) : 0;
+                const collectiveWinner = winnerCounts.sort(
+                  (first, second) =>
+                    second.count - first.count ||
+                    first.label.localeCompare(second.label, "sv-SE"),
+                )[0];
+                const collectiveRunnerUp = runnerUpCounts.sort(
+                  (first, second) =>
+                    second.count - first.count ||
+                    first.label.localeCompare(second.label, "sv-SE"),
+                )[0];
                 const sortedTeams = [...groupTeams[group]].sort((firstTeam, secondTeam) => {
                   const firstWinner = winnerCounts.find((item) => item.label === firstTeam);
                   const secondWinner = winnerCounts.find((item) => item.label === secondTeam);
@@ -3916,15 +4204,58 @@ function StatisticsView({ predictions }: { predictions: PublicPrediction[] }) {
                         <span><i className="runner-up" />Tvåa</span>
                       </div>
                     </div>
+                    {hasActualGroupResult && actualGroup ? (
+                      <div className="actual-group-panel">
+                        <div className="actual-group-summary">
+                          <div>
+                            <span>Facit</span>
+                            <strong>
+                              {actualGroup.winner}, {actualGroup.runnerUp}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Kollektivet</span>
+                            <strong>
+                              {collectiveWinner?.label ?? "-"},{" "}
+                              {collectiveRunnerUp?.label ?? "-"}
+                            </strong>
+                          </div>
+                        </div>
+                        <div className="actual-group-metrics">
+                          <div>
+                            <span>Exakt ordning</span>
+                            <strong>
+                              {exactGroupOrderCount} ({exactGroupOrderPercentage}%)
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Rätt lag, fel ordning</span>
+                            <strong>
+                              {wrongOrderTopTwoCount} ({wrongOrderTopTwoPercentage}%)
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="actual-result-empty">Gruppfacit saknas ännu.</div>
+                    )}
                     <div className="grouped-bars">
                       {sortedTeams.map((team, index) => {
                         const winner = winnerCounts.find((item) => item.label === team);
                         const runnerUp = runnerUpCounts.find((item) => item.label === team);
                         const runnerUpPercentage = runnerUp?.percentage ?? 0;
+                        const isActualWinner =
+                          hasActualGroupResult && actualGroup?.winner === team;
+                        const isActualRunnerUp =
+                          hasActualGroupResult && actualGroup?.runnerUp === team;
 
                         return (
                           <div className="team-bar-row" key={team}>
-                            <strong>{team}</strong>
+                            <strong>
+                              {team}
+                              {isActualWinner && <span className="result-badge">Facit etta</span>}
+                              {isActualRunnerUp && <span className="result-badge">Facit tvåa</span>}
+                            </strong>
                             <div className="dual-bars">
                               <BarRow
                                 item={{
